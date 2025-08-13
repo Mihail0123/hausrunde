@@ -1,9 +1,11 @@
 from datetime import datetime, timezone
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.contrib.auth import authenticate
+from django.contrib.auth import authenticate, get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 from rest_framework_simplejwt.tokens import  AccessToken, RefreshToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.utils.timezone import now
@@ -12,8 +14,78 @@ from .models import CustomUser
 from .serializers import CustomUserSerializer
 
 
-
 # Create your views here.
+User = get_user_model()
+
+class RegisterView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request, *args, **kwargs):
+        email = request.data.get('email')
+        password = request.data.get('password')
+        first_name = request.data.get('first_name', '')
+        last_name = request.data.get('last_name', '')
+        phone_number = request.data.get('phone_number', '')
+
+        if not email or not password:
+            raise ValidationError({'detail': "Email and password are required."})
+
+        if User.objects.filter(email=email).exists():
+            raise ValidationError({'detail': "Email already registered."})
+
+        try:
+            validate_password(password)
+        except ValidationError as e:
+            raise ValidationError({'password': e.messages})
+
+        user = User.objects.create_user(
+            email=email,
+            password=password,
+            first_name=first_name,
+            last_name=last_name,
+            phone_number=phone_number
+        )
+
+        refresh = RefreshToken.for_user(user)
+        access_token = refresh.access_token
+
+        access_expiry = datetime.fromtimestamp(access_token['exp'], tz=timezone.utc)
+        refresh_expiry = datetime.fromtimestamp(refresh['exp'], tz=timezone.utc)
+
+        response = Response(
+            {
+                "detail": "Account created successfully.",
+                "user": {
+                    "id": user.id,
+                    "email": user.email,
+                    "first_name": user.first_name,
+                    "last_name": user.last_name,
+                    "phone_number": user.phone_number
+                }
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+        response.set_cookie(
+            key='access_token',
+            value=str(access_token),
+            httponly=True,
+            secure=False, #
+            samesite='Lax',
+            expires=access_expiry,
+            path='/',
+        )
+        response.set_cookie(
+            key='refresh_token',
+            value=str(refresh),
+            httponly=True,
+            secure=False,
+            samesite='Lax',
+            expires=refresh_expiry,
+            path='/',
+        )
+
+        return response
 class CustomUserViewSet(viewsets.ModelViewSet):
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
