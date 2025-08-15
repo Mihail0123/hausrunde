@@ -1,76 +1,48 @@
 from datetime import datetime, timezone
+from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
-from django.contrib.auth import authenticate, get_user_model
-from django.contrib.auth.password_validation import validate_password
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
-from rest_framework.exceptions import ValidationError
-from rest_framework_simplejwt.tokens import  AccessToken, RefreshToken
+from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.utils.timezone import now
+from django.contrib.auth import authenticate
 
 from .models import CustomUser
-from .serializers import CustomUserSerializer
+from .serializers import CustomUserSerializer, RegistrationSerializer, LoginSerializer
 
 
-# Create your views here.
-User = get_user_model()
+class RegisterView(CreateAPIView):
+    serializer_class = RegistrationSerializer
+    permission_classes = [AllowAny]
 
-class RegisterView(APIView):
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request, *args, **kwargs):
-        email = request.data.get('email')
-        password = request.data.get('password')
-        first_name = request.data.get('first_name', '')
-        last_name = request.data.get('last_name', '')
-        phone_number = request.data.get('phone_number', '')
-
-        if not email or not password:
-            raise ValidationError({'detail': "Email and password are required."})
-
-        if User.objects.filter(email=email).exists():
-            raise ValidationError({'detail': "Email already registered."})
-
-        try:
-            validate_password(password)
-        except ValidationError as e:
-            raise ValidationError({'password': e.messages})
-
-        user = User.objects.create_user(
-            email=email,
-            password=password,
-            first_name=first_name,
-            last_name=last_name,
-            phone_number=phone_number
-        )
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
 
         refresh = RefreshToken.for_user(user)
         access_token = refresh.access_token
-
         access_expiry = datetime.fromtimestamp(access_token['exp'], tz=timezone.utc)
         refresh_expiry = datetime.fromtimestamp(refresh['exp'], tz=timezone.utc)
 
-        response = Response(
-            {
-                "detail": "Account created successfully.",
-                "user": {
-                    "id": user.id,
-                    "email": user.email,
-                    "first_name": user.first_name,
-                    "last_name": user.last_name,
-                    "phone_number": user.phone_number
-                }
-            },
-            status=status.HTTP_201_CREATED
-        )
-
+        data = {
+            "detail": "Account created successfully.",
+            "user": {
+                "id": user.id,
+                "email": user.email,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "phone_number": user.phone_number
+            }
+        }
+        response = Response(data, status=status.HTTP_201_CREATED)
         response.set_cookie(
             key='access_token',
             value=str(access_token),
             httponly=True,
-            secure=False, #
+            secure=False,
             samesite='Lax',
             expires=access_expiry,
             path='/',
@@ -84,26 +56,32 @@ class RegisterView(APIView):
             expires=refresh_expiry,
             path='/',
         )
-
         return response
+
 class CustomUserViewSet(viewsets.ModelViewSet):
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
 
 class LoginView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [AllowAny]
+    serializer_class = LoginSerializer
+
+    def get(self, request):
+        serializer = self.serializer_class()
+        return Response(serializer.data)
 
     def post(self, request, *args, **kwargs):
-        email = request.data.get('email')
-        password = request.data.get('password')
+        serializer = self.serializer_class(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        email = serializer.validated_data['email']
+        password = serializer.validated_data['password']
         user = authenticate(request, email=email, password=password)
 
         if user:
             refresh = RefreshToken.for_user(user)
             access_token = refresh.access_token
-
             access_expiry = datetime.fromtimestamp(access_token['exp'], tz=timezone.utc)
             refresh_expiry = datetime.fromtimestamp(refresh['exp'], tz=timezone.utc)
 
@@ -112,7 +90,7 @@ class LoginView(APIView):
                 key='access_token',
                 value=str(access_token),
                 httponly=True,
-                secure=False, # сменить на True
+                secure=False,
                 samesite='Lax',
                 expires=access_expiry,
                 path='/',
@@ -130,8 +108,9 @@ class LoginView(APIView):
 
         return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
+
 class LogoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         response = Response({"detail": "Logout successful"}, status=status.HTTP_200_OK)
@@ -141,9 +120,7 @@ class LogoutView(APIView):
 
 
 class DebugTokenView(APIView):
-    """
-    token info
-    """
+    """token info"""
     permission_classes = [AllowAny]
 
     def get(self, request):
@@ -151,7 +128,7 @@ class DebugTokenView(APIView):
         refresh_token = request.COOKIES.get('refresh_token')
 
         data = {
-            "has access": bool(access_token),
+            "has_access": bool(access_token),
             "access_expires_in_sec": None,
             "access_valid": False,
             "has_refresh": bool(refresh_token),
@@ -171,7 +148,7 @@ class DebugTokenView(APIView):
         if refresh_token:
             try:
                 refresh = RefreshToken(refresh_token)
-                exp = token['exp']
+                exp = refresh['exp']
                 data['refresh_expires_in_sec'] = int(exp - now().timestamp())
                 data['refresh_valid'] = True
             except TokenError:
