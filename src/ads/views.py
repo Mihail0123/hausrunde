@@ -6,14 +6,9 @@ from django.db.models import Q
 from .models import Ad
 from .serializers import AdSerializer
 from .permissions import IsAdOwnerOrReadOnly
+from .pagination import AdPagination
 
 
-
-
-
-
-
-# Filters
 class AdFilter(df.FilterSet):
     price_min = df.NumberFilter(field_name='price', lookup_expr='gte', label='Price min')
     price_max = df.NumberFilter(field_name='price', lookup_expr='lte', label='Price max')
@@ -22,7 +17,7 @@ class AdFilter(df.FilterSet):
     location = df.CharFilter(field_name='location', lookup_expr='icontains', label='Location (contains)')
     housing_type = df.CharFilter(field_name='housing_type', lookup_expr='iexact', label='Housing type (exact)')
 
-    # smart search across multiple fields; AND between words
+    # smart search across multiple fields and between words
     q = df.CharFilter(method='filter_q', label='Search')
 
     def filter_q(self, queryset, name, value):
@@ -63,6 +58,8 @@ class AdFilter(df.FilterSet):
                              type=OpenApiTypes.STR),
             OpenApiParameter(name="ordering", description="Ordering: price, -price, created_at, -created_at",
                              required=False, type=OpenApiTypes.STR),
+            OpenApiParameter(name="page", description="Page number (>=1)", required=False, type=OpenApiTypes.INT),
+            OpenApiParameter(name="page_size", description="Items per page (<=50)", required=False, type=OpenApiTypes.INT),
         ],
     ),
     retrieve=extend_schema(
@@ -87,10 +84,13 @@ class AdFilter(df.FilterSet):
         description="Delete an ad (only for the owner)."
     ),
 )
+
+
 class AdViewSet(viewsets.ModelViewSet):
     queryset = Ad.objects.all()
     serializer_class = AdSerializer
     permission_classes = (permissions.IsAuthenticatedOrReadOnly, IsAdOwnerOrReadOnly)
+    pagination_class = AdPagination
 
     filter_backends = (df.DjangoFilterBackend, filters.OrderingFilter)
     filterset_class = AdFilter
