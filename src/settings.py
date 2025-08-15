@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     'src.ads',
     'rest_framework',
     'drf_spectacular',
+    'drf_spectacular_sidecar',
 ]
 
 AUTH_USER_MODEL = 'users.CustomUser'
@@ -161,3 +162,15 @@ SIMPLE_JWT = {
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Hausrunde API',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'SWAGGER_UI_DIST': 'SIDECAR',
+    'SWAGGER_UI_FAVICON_HREF': 'SIDECAR',
+    'REDOC_DIST': 'SIDECAR',
+    'SWAGGER_UI_SETTINGS': {
+        'persistAuthorization': True,
+        'displayRequestDuration': True,
+    },
+}
