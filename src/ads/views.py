@@ -1,11 +1,14 @@
-from rest_framework import viewsets, permissions, filters
+from rest_framework import viewsets, permissions, filters, status
+from rest_framework.decorators import action
+from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes
 from django_filters import rest_framework as df
+from django.db import models
 from django.db.models import Q
 
-from .models import Ad
-from .serializers import AdSerializer
-from .permissions import IsAdOwnerOrReadOnly
+from .models import Ad, Booking
+from .serializers import AdSerializer, BookingSerializer
+from .permissions import IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner
 from .pagination import AdPagination
 
 
@@ -102,3 +105,63 @@ class AdViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
+
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List my related bookings",
+        description="List bookings where you are the tenant or the ad owner.",
+    ),
+    retrieve=extend_schema(
+        summary="Get a booking details",
+        description="Visible only to booking tenant or ad owner.",
+    ),
+    create=extend_schema(
+        summary="Create a booking request",
+        description="Authenticated users only.",
+    ),
+)
+class BookingViewSet(viewsets.ModelViewSet):
+    """
+    - list: show bookings for current user (as tenant OR as ad owner)
+    - create: create booking as current user (tenant)
+    - confirm/reject: only ad owner
+    - cancel: only booking tenant
+    """
+    queryset = Booking.objects.all()
+    serializer_class = BookingSerializer
+    permission_classes = (permissions.IsAuthenticated, IsBookingOwnerOrAdOwner)
+
+    def get_queryset(self):
+        user = self.request.user
+        # user as tenant OR as ad owner
+        return Booking.objects.filter(
+            models.Q(tenant=user) | models.Q(ad__owner=user)
+        ).select_related('ad', 'tenant')
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.user)
+
+    @extend_schema(summary="Cancel my booking (tenant only)")
+    @action(detail=True, methods=['post'])
+    def cancel(self, request, pk=None):
+        booking = self.get_object()
+        booking.status = Booking.CANCELLED
+        booking.save(update_fields=['status'])
+        return Response({'detail': 'Cancelled'}, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Confirm booking (ad owner only)")
+    @action(detail=True, methods=['post'])
+    def confirm(self, request, pk=None):
+        booking = self.get_object()
+        booking.status = Booking.CONFIRMED
+        booking.save(update_fields=['status'])
+        return Response({'detail': 'Confirmed'}, status=status.HTTP_200_OK)
+
+    @extend_schema(summary="Reject booking (ad owner only)")
+    @action(detail=True, methods=['post'])
+    def reject(self, request, pk=None):
+        booking = self.get_object()
+        booking.status = Booking.CANCELLED
+        booking.save(update_fields=['status'])
+        return Response({'detail': 'Rejected'}, status=status.HTTP_200_OK)
