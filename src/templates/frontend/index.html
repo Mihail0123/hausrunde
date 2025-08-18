@@ -222,6 +222,7 @@
   function showTabs(show){ document.getElementById('tabs').style.display = show ? 'flex' : 'none'; }
   function setAuthStatus(txt){ document.getElementById('authStatus').textContent = txt || ''; }
   function fmtAvg(x){ var n = Number(x); return isFinite(n) ? n.toFixed(1) : '—'; }
+  function emailsEqual(a, b){ return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase(); }
 
   // tabs
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
@@ -324,6 +325,7 @@
   function renderAds(items){
     if(!items.length){ adsList.innerHTML = '<div class="center muted">No ads found.</div>'; return; }
     adsList.innerHTML = items.map(function(ad){
+      var own = emailsEqual(currentEmail, ad.owner); // если owner не придёт — own=false
       return '\
       <div class="card ad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
         <div class="row" style="justify-content:space-between; align-items:flex-start">\
@@ -343,12 +345,12 @@
         <div class="muted" style="margin-top:6px">'+ esc(ad.description||'') +'</div>\
         <div class="row" style="justify-content:flex-end; margin-top:8px">\
           <button class="btn-outline" data-ad="'+ ad.id +'" data-action="reviews" onclick="event.stopPropagation()">Reviews</button>\
-          <button class="btn-outline" data-ad="'+ ad.id +'" data-action="book" onclick="event.stopPropagation()">Book</button>\
+          '+ (own ? '' : '<button class="btn-outline" data-ad="'+ ad.id +'" data-action="book" onclick="event.stopPropagation()">Book</button>') + '\
         </div>\
       </div>';
     }).join('');
 
-    // Card click -> open details
+    // Card -> details
     Array.prototype.forEach.call(adsList.querySelectorAll('.ad-card'), function(card){
       card.addEventListener('click', function(){
         var id = Number(card.getAttribute('data-ad'));
@@ -423,9 +425,10 @@
     var data = await res.json();
     var mine = data.results || [];
     if(!mine.length){ box.textContent='No ads yet.'; return; }
+
     box.innerHTML = mine.map(function(ad){
       return '\
-      <div class="card">\
+      <div class="card myad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
         <div class="row" style="justify-content:space-between">\
           <div><b>'+ esc(ad.title) +'</b><div class="muted">'+ esc(ad.location) +'</div></div>\
           <div class="right">\
@@ -435,6 +438,14 @@
         </div>\
       </div>';
     }).join('');
+
+    // клик по моей карточке -> модалка объявления
+    Array.prototype.forEach.call(box.querySelectorAll('.myad-card'), function(card){
+      card.addEventListener('click', function(){
+        var id = Number(card.getAttribute('data-ad'));
+        openAdModal(id);
+      });
+    });
   }
 
   // ======== BOOKINGS ========
@@ -446,7 +457,7 @@
     var list = await res.json();
     if(!list.length){ box.textContent='No bookings yet.'; return; }
 
-    // Load owner emails cache for each ad
+    // owners cache
     var adOwnersCache = {};
     async function getAdOwner(adId){
       if(adOwnersCache[adId]) return adOwnersCache[adId];
@@ -514,40 +525,84 @@
 
   // ======== REVIEWS ========
   const reviewsModal = document.getElementById('reviewsModal');
-  const reviewsList = document.getElementById('reviewsList');
-  const reviewForm  = document.getElementById('reviewForm');
-  const reviewMsg   = document.getElementById('reviewMsg');
-  document.getElementById('reviewsClose').addEventListener('click', function(){ reviewsModal.close(); });
+  const reviewsList  = document.getElementById('reviewsList');
+  const reviewForm   = document.getElementById('reviewForm');
+  const reviewMsg    = document.getElementById('reviewMsg');
+  document.getElementById('reviewsClose').addEventListener('click', ()=> reviewsModal.close());
 
-  function openReviewsModal(adId){
+  async function openReviewsModal(adId){
     document.getElementById('revAdId').textContent = adId;
     document.getElementById('reviewAdId').value = adId;
     reviewMsg.textContent = '';
     reviewsList.innerHTML = 'Loading…';
     reviewsModal.showModal();
-    reviewForm.style.display = access ? 'grid' : 'none'; // show form only for logged users
-    loadReviews(adId);
+
+    // Показывать форму только если залогинен и это НЕ моё объявление
+    let showForm = !!access;
+    if (showForm) {
+      try {
+        const r = await fetch(`${API}/ads/${adId}/`);
+        if (r.ok) {
+          const ad = await r.json();
+          const isOwner = currentEmail && ad.owner &&
+            currentEmail.toLowerCase() === String(ad.owner).toLowerCase();
+          showForm = !isOwner;
+        }
+      } catch(_) {}
+    }
+    reviewForm.style.display = showForm ? 'grid' : 'none';
+
+    await loadReviews(adId);
   }
 
   async function loadReviews(adId){
-    var res = await fetch(API + "/reviews/?ad=" + adId + "&ordering=-created_at");
+    const res = await fetch(`${API}/reviews/?ad=${adId}&ordering=-created_at`);
     if(!res.ok){ reviewsList.textContent = 'Failed to load reviews'; return; }
-    var full = await res.json();
-    var items = full.results || (Array.isArray(full) ? full : []);
+    const full = await res.json();
+    const items = full.results || (Array.isArray(full) ? full : []);
     if(!items.length){ reviewsList.innerHTML = '<div class="muted">No reviews yet.</div>'; return; }
-    var sum = 0; for (var i=0;i<items.length;i++){ sum += Number(items[i].rating || 0); }
-    var avg = (sum / items.length).toFixed(1);
-    reviewsList.innerHTML = '\
-      <div class="rating">⭐ '+ avg +' · '+ items.length +' review(s)</div>\
-      <div style="margin-top:8px;"></div>\
-      ' + items.map(function(r){ return '\
-        <div class="card" style="margin:8px 0;">\
-          <div><b>'+ esc(r.tenant || '') +'</b> · <span class="pill">'+ esc(r.rating) +'/5</span></div>\
-          <div class="muted">'+ esc(r.text || '') +'</div>\
-          <div class="muted">'+ esc(r.created_at || '') +'</div>\
-        </div>'; }).join('');
-
+    const avg = (items.reduce((s, r)=> s + Number(r.rating||0), 0) / items.length).toFixed(1);
+    reviewsList.innerHTML = `
+      <div class="rating">⭐ ${avg} · ${items.length} review(s)</div>
+      <div style="margin-top:8px;"></div>
+      ${items.map(r => `
+        <div class="card" style="margin:8px 0;">
+          <div><b>${esc(r.tenant || '')}</b> · <span class="pill">${esc(r.rating)}/5</span></div>
+          <div class="muted">${esc(r.text || '')}</div>
+          <div class="muted">${esc(r.created_at || '')}</div>
+        </div>`).join('')}
+    `;
   }
+
+  // ВАЖНО: предотвращаем перезагрузку страницы при отправке формы
+  reviewForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(!access){ alert('Login required'); return; }
+    const fd = new FormData(reviewForm);
+    const payload = Object.fromEntries(fd.entries());
+    payload.rating = Number(payload.rating);
+
+    const res = await fetch(`${API}/reviews/`, {
+      method:'POST',
+      headers:{ ...hAuth(), 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    if(res.ok){
+      reviewMsg.textContent = '✅ Review added';
+      reviewForm.reset();
+      await loadReviews(document.getElementById('reviewAdId').value);
+    } else {
+      let err = {};
+      try { err = await res.json(); } catch {}
+      reviewMsg.textContent = '❌ ' + (err.detail || (err.non_field_errors && err.non_field_errors[0]) || JSON.stringify(err));
+      if (res.status === 401) {
+        // токен истёк — просим перелогиниться
+        access = null; currentEmail = null; showTabs(false);
+        setAuthStatus('Session expired — please login again.');
+      }
+    }
+  });
 
   // ======== AD DETAILS MODAL ========
   const adModal = document.getElementById('adModal');
@@ -562,7 +617,7 @@
   adClose.addEventListener('click', function(){ adModal.close(); });
 
   async function openAdModal(adId){
-    // GET /api/ads/{id}/ — backend will create AdView with 6h dedup
+    // GET /api/ads/{id}/ — backend создаст AdView с дедупом 6h
     var res = await fetch(API + "/ads/" + adId + "/");
     if(!res.ok){ alert('Failed to load ad'); return; }
     var ad = await res.json();
@@ -588,6 +643,10 @@
       adGallery.innerHTML = '<div class="muted">No images.</div>';
     }
 
+    var isOwner = emailsEqual(currentEmail, ad.owner);
+
+    // "Book": скрыть, если это моё объявление
+    adBookBtn.style.display = isOwner ? 'none' : 'inline-block';
     adBookBtn.onclick = function(e){
       e.preventDefault();
       if(!access){ alert('Please login first'); return; }
@@ -595,9 +654,11 @@
       document.getElementById('bookMsg').textContent = '';
       bookModal.showModal();
     };
+
+    // "Reviews": список всегда; форма только если не владелец
     adReviewsBtn.onclick = function(e){
       e.preventDefault();
-      openReviewsModal(adId);
+      openReviewsModal(adId, { isOwner: isOwner });
     };
 
     adModal.showModal();
