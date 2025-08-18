@@ -1,4 +1,4 @@
-from django.db.models import Q
+from django.db.models import Q, Avg
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
@@ -22,8 +22,9 @@ class AdFilter(df.FilterSet):
     rooms_max    = df.NumberFilter(field_name='rooms', lookup_expr='lte', label='Rooms max')
     location     = df.CharFilter(field_name='location', lookup_expr='icontains', label='Location (contains)')
     housing_type = df.CharFilter(field_name='housing_type', lookup_expr='iexact', label='Housing type (exact)')
+    area_min = df.NumberFilter(field_name='area', lookup_expr='gte', label='Area min (m²)')
+    area_max = df.NumberFilter(field_name='area', lookup_expr='lte', label='Area max (m²)')
 
-    # smart multi-field search with AND between words
     q = df.CharFilter(method='filter_q', label='Search')
 
     def filter_q(self, queryset, name, value):
@@ -39,7 +40,8 @@ class AdFilter(df.FilterSet):
 
     class Meta:
         model = Ad
-        fields = ['q', 'price_min', 'price_max', 'rooms_min', 'rooms_max', 'location', 'housing_type']
+        fields = ['q', 'price_min', 'price_max', 'rooms_min', 'rooms_max', 'location', 'housing_type', 'area_min',
+                  'area_max']
 
 
 # -------------------------
@@ -166,12 +168,19 @@ class AdViewSet(viewsets.ModelViewSet):
 
     filter_backends = (df.DjangoFilterBackend, filters.OrderingFilter)
     filterset_class = AdFilter
-    ordering_fields = ('price', 'created_at')
+    ordering_fields = ('price', 'created_at', 'area')
     ordering = ('-created_at',)
 
     def get_queryset(self):
-        # show only active ads
-        return super().get_queryset().filter(is_active=True)
+        # show only active ads + avg rating
+        return (
+            super()
+            .get_queryset()
+            .filter(is_active=True)
+            .annotate(average_rating=Avg('reviews__rating'))
+            .select_related('owner')
+            .prefetch_related('images')
+        )
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
