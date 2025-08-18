@@ -1,10 +1,10 @@
+from django.db.models import Q
+from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from drf_spectacular.utils import extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes
-from django_filters import rest_framework as df
-from django.db import models
-from django.db.models import Q
+from drf_spectacular.utils import (extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample,
+                                   OpenApiResponse)
 
 from .models import Ad, Booking
 from .serializers import AdSerializer, BookingSerializer
@@ -12,19 +12,22 @@ from .permissions import IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner
 from .pagination import AdPagination
 
 
+# -------------------------
+# Filters for Ads (readable labels + smart search 'q')
+# -------------------------
 class AdFilter(df.FilterSet):
-    price_min = df.NumberFilter(field_name='price', lookup_expr='gte', label='Price min')
-    price_max = df.NumberFilter(field_name='price', lookup_expr='lte', label='Price max')
-    rooms_min = df.NumberFilter(field_name='rooms', lookup_expr='gte', label='Rooms min')
-    rooms_max = df.NumberFilter(field_name='rooms', lookup_expr='lte', label='Rooms max')
-    location = df.CharFilter(field_name='location', lookup_expr='icontains', label='Location (contains)')
+    price_min    = df.NumberFilter(field_name='price', lookup_expr='gte', label='Price min')
+    price_max    = df.NumberFilter(field_name='price', lookup_expr='lte', label='Price max')
+    rooms_min    = df.NumberFilter(field_name='rooms', lookup_expr='gte', label='Rooms min')
+    rooms_max    = df.NumberFilter(field_name='rooms', lookup_expr='lte', label='Rooms max')
+    location     = df.CharFilter(field_name='location', lookup_expr='icontains', label='Location (contains)')
     housing_type = df.CharFilter(field_name='housing_type', lookup_expr='iexact', label='Housing type (exact)')
 
-    # smart search across multiple fields and between words
+    # smart multi-field search with AND between words
     q = df.CharFilter(method='filter_q', label='Search')
 
     def filter_q(self, queryset, name, value):
-        terms = [t.strip() for t in value.split() if t.strip()]
+        terms = [t.strip() for t in (value or "").split() if t.strip()]
         for term in terms:
             queryset = queryset.filter(
                 Q(title__icontains=term) |
@@ -39,56 +42,122 @@ class AdFilter(df.FilterSet):
         fields = ['q', 'price_min', 'price_max', 'rooms_min', 'rooms_max', 'location', 'housing_type']
 
 
+# -------------------------
+# Ad ViewSet
+# -------------------------
 @extend_schema_view(
     list=extend_schema(
         summary="List ads",
-        description="Public list with smart search (q), filters, and ordering.",
+        description="Public list with smart search (`q`), filters (price, rooms, location, type), ordering and pagination.",
         auth=[],
         parameters=[
-            OpenApiParameter(name="q", description="Smart search in title/description/location/housing_type",
-                             required=False, type=OpenApiTypes.STR),
-            OpenApiParameter(name="price_min", description="Minimum price (>=)", required=False,
-                             type=OpenApiTypes.NUMBER),
-            OpenApiParameter(name="price_max", description="Maximum price (<=)", required=False,
-                             type=OpenApiTypes.NUMBER),
-            OpenApiParameter(name="rooms_min", description="Minimum number of rooms (>=)", required=False,
-                             type=OpenApiTypes.INT),
-            OpenApiParameter(name="rooms_max", description="Maximum number of rooms (<=)", required=False,
-                             type=OpenApiTypes.INT),
-            OpenApiParameter(name="location", description="Filter by location (icontains)", required=False,
-                             type=OpenApiTypes.STR),
-            OpenApiParameter(name="housing_type", description="Filter by housing type (iexact)", required=False,
-                             type=OpenApiTypes.STR),
-            OpenApiParameter(name="ordering", description="Ordering: price, -price, created_at, -created_at",
-                             required=False, type=OpenApiTypes.STR),
-            OpenApiParameter(name="page", description="Page number (>=1)", required=False, type=OpenApiTypes.INT),
-            OpenApiParameter(name="page_size", description="Items per page (<=50)", required=False, type=OpenApiTypes.INT),
+            OpenApiParameter(
+                name="q",
+                type=OpenApiTypes.STR,
+                description="Smart search in title/description/location/housing_type",
+                examples=[
+                    OpenApiExample("Single term", value="berlin"),
+                    OpenApiExample("Multiple terms (AND)", value="berlin balcony"),
+                ],
+            ),
+            OpenApiParameter(
+                name="price_min",
+                type=OpenApiTypes.NUMBER,
+                description="Minimum price (>=)",
+                examples=[OpenApiExample("Min 600", value=600)]
+            ),
+            OpenApiParameter(
+                name="price_max",
+                type=OpenApiTypes.NUMBER,
+                description="Maximum price (<=)",
+                examples=[OpenApiExample("Max 1500", value=1500)]
+            ),
+            OpenApiParameter(
+                name="rooms_min",
+                type=OpenApiTypes.INT,
+                description="Minimum number of rooms (>=)",
+                examples=[OpenApiExample("At least 2 rooms", value=2)]
+            ),
+            OpenApiParameter(
+                name="rooms_max",
+                type=OpenApiTypes.INT,
+                description="Maximum number of rooms (<=)",
+                examples=[OpenApiExample("Up to 3 rooms", value=3)]
+            ),
+            OpenApiParameter(
+                name="location",
+                type=OpenApiTypes.STR,
+                description="Filter by location (icontains)",
+                examples=[OpenApiExample("City contains 'ber'", value="ber")]
+            ),
+            OpenApiParameter(
+                name="housing_type",
+                type=OpenApiTypes.STR,
+                description="Filter by housing type (iexact)",
+                examples=[OpenApiExample("Exact type", value="apartment")]
+            ),
+            OpenApiParameter(
+                name="ordering",
+                type=OpenApiTypes.STR,
+                description="Ordering: price, -price, created_at, -created_at",
+                examples=[
+                    OpenApiExample("Cheapest first", value="price"),
+                    OpenApiExample("Newest first", value="-created_at"),
+                ],
+            ),
+            OpenApiParameter(
+                name="page",
+                type=OpenApiTypes.INT,
+                description="Page number (>=1)",
+                examples=[OpenApiExample("First page", value=1)]
+            ),
+            OpenApiParameter(
+                name="page_size",
+                type=OpenApiTypes.INT,
+                description="Items per page (<=50)",
+                examples=[OpenApiExample("20 per page", value=20)]
+            ),
+        ],
+        examples=[
+            OpenApiExample(
+                "Example query (URL)",
+                description="q=berlin&price_min=600&rooms_min=2&ordering=price&page=1&page_size=20",
+                value=None,  # informational only (query params above)
+            )
         ],
     ),
     retrieve=extend_schema(
         summary="Retrieve ad",
-        description="Public details of an ad.",
+        description="Public details of a specific ad.",
         auth=[],
     ),
     create=extend_schema(
         summary="Create ad",
-        description="Create a new ad (only for authenticated users)."
+        description="Create a new ad (only for authenticated users).",
+        examples=[
+            OpenApiExample(
+                "Ad creation example",
+                value={
+                    "title": "Modern apartment in Berlin",
+                    "description": "Spacious 2-room apartment near Alexanderplatz",
+                    "location": "Berlin",
+                    "price": 1200,
+                    "rooms": 2,
+                    "housing_type": "apartment",
+                    "is_active": True
+                }
+            )
+        ],
+        responses={
+            201: OpenApiResponse(response=AdSerializer, description="Ad created"),
+            400: OpenApiResponse(description="Validation error"),
+            401: OpenApiResponse(description="Unauthorized"),
+        }
     ),
-    update=extend_schema(
-        summary="Update ad",
-        description="Update an ad (only for the owner)."
-    ),
-    partial_update=extend_schema(
-        summary="Partial update ad",
-        description="Partially update an ad (only for the owner)."
-    ),
-    destroy=extend_schema(
-        summary="Delete ad",
-        description="Delete an ad (only for the owner)."
-    ),
+    update=extend_schema(summary="Update ad", description="Update an ad (only for the owner)."),
+    partial_update=extend_schema(summary="Partial update ad", description="Partially update an ad (only for the owner)."),
+    destroy=extend_schema(summary="Delete ad", description="Delete an ad (only for the owner)."),
 )
-
-
 class AdViewSet(viewsets.ModelViewSet):
     queryset = Ad.objects.all()
     serializer_class = AdSerializer
@@ -101,24 +170,49 @@ class AdViewSet(viewsets.ModelViewSet):
     ordering = ('-created_at',)
 
     def get_queryset(self):
+        # show only active ads
         return super().get_queryset().filter(is_active=True)
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
 
 
+# -------------------------
+# Booking ViewSet
+# -------------------------
 @extend_schema_view(
     list=extend_schema(
         summary="List my related bookings",
-        description="List bookings where you are the tenant or the ad owner.",
+        description="Show bookings where you are either the tenant or the ad owner."
     ),
     retrieve=extend_schema(
-        summary="Get a booking details",
-        description="Visible only to booking tenant or ad owner.",
+        summary="Retrieve booking",
+        description="Booking details visible only to tenant or ad owner."
     ),
     create=extend_schema(
         summary="Create a booking request",
-        description="Authenticated users only.",
+        description=(
+            "Authenticated users only.\n\n"
+            "- Cannot book your own ad\n"
+            "- Cannot book inactive ads\n"
+            "- Dates must not overlap with existing confirmed/pending bookings"
+        ),
+        examples=[
+            OpenApiExample(
+                "Successful booking",
+                value={"ad": 1, "date_from": "2025-09-01", "date_to": "2025-09-10"}
+            ),
+            OpenApiExample(
+                "Overlap (will fail)",
+                value={"ad": 1, "date_from": "2025-09-05", "date_to": "2025-09-07"},
+                response_only=True
+            ),
+        ],
+        responses={
+            201: OpenApiResponse(response=BookingSerializer, description="Booking created"),
+            400: OpenApiResponse(description="Validation error"),
+            401: OpenApiResponse(description="Unauthorized"),
+        }
     ),
 )
 class BookingViewSet(viewsets.ModelViewSet):
@@ -134,15 +228,21 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        # user as tenant OR as ad owner
         return Booking.objects.filter(
-            models.Q(tenant=user) | models.Q(ad__owner=user)
+            Q(tenant=user) | Q(ad__owner=user)
         ).select_related('ad', 'tenant')
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.user)
 
-    @extend_schema(summary="Cancel my booking (tenant only)")
+    @extend_schema(
+        summary="Cancel booking (tenant only)",
+        responses={
+            200: OpenApiResponse(description="Booking cancelled"),
+            403: OpenApiResponse(description="Forbidden"),
+            404: OpenApiResponse(description="Not found"),
+        }
+    )
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         booking = self.get_object()
@@ -150,15 +250,37 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.save(update_fields=['status'])
         return Response({'detail': 'Cancelled'}, status=status.HTTP_200_OK)
 
-    @extend_schema(summary="Confirm booking (ad owner only)")
+    @extend_schema(
+        summary="Confirm booking (ad owner only)",
+        description="Also automatically cancels overlapping pending bookings for the same ad and dates.",
+        responses={
+            200: OpenApiResponse(description="Booking confirmed"),
+            403: OpenApiResponse(description="Forbidden"),
+            404: OpenApiResponse(description="Not found"),
+        }
+    )
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         booking = self.get_object()
         booking.status = Booking.CONFIRMED
         booking.save(update_fields=['status'])
+        # auto-cancel overlapping pending bookings
+        Booking.objects.filter(
+            ad=booking.ad,
+            status='PENDING',
+            date_from__lte=booking.date_to,
+            date_to__gte=booking.date_from
+        ).exclude(pk=booking.pk).update(status=Booking.CANCELLED)
         return Response({'detail': 'Confirmed'}, status=status.HTTP_200_OK)
 
-    @extend_schema(summary="Reject booking (ad owner only)")
+    @extend_schema(
+        summary="Reject booking (ad owner only)",
+        responses={
+            200: OpenApiResponse(description="Booking rejected"),
+            403: OpenApiResponse(description="Forbidden"),
+            404: OpenApiResponse(description="Not found"),
+        }
+    )
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         booking = self.get_object()
