@@ -51,16 +51,14 @@
     <div id="authStatus" class="center muted" style="margin-top:8px"></div>
   </section>
 
-
-    <!-- REGISTER -->
-    <h2>Register</h2>
-    <form id="registerForm" class="row center" style="margin-bottom:16px">
-      <input type="email" name="email" placeholder="Email" required style="min-width:240px">
-      <input type="password" name="password" placeholder="Password" required style="min-width:200px">
-      <button type="submit" class="btn">Register</button>
-    </form>
-    <div id="registerMsg" class="center muted" style="margin-top:8px"></div>
-
+  <!-- REGISTER -->
+  <h2>Register</h2>
+  <form id="registerForm" class="row center" style="margin-bottom:16px">
+    <input type="email" name="email" placeholder="Email" required style="min-width:240px">
+    <input type="password" name="password" placeholder="Password" required style="min-width:200px">
+    <button type="submit" class="btn">Register</button>
+  </form>
+  <div id="registerMsg" class="center muted" style="margin-top:8px"></div>
 
   <!-- TABS -->
   <div class="tabs" id="tabs" style="display:none;">
@@ -124,13 +122,13 @@
     <div id="adCreateMsg" class="center muted"></div>
   </section>
 
-  <!-- MY ADS (derived from logged email) -->
+  <!-- MY ADS -->
   <section id="tab-myads" class="section">
     <h2>My Ads</h2>
     <div id="myAdsList" class="muted center">Login to see your ads.</div>
   </section>
 
-  <!-- BOOKINGS (mine as tenant or owner) -->
+  <!-- BOOKINGS -->
   <section id="tab-bookings" class="section">
     <h2>My Bookings</h2>
 
@@ -166,17 +164,15 @@
 <script>
   // ======== STATE ========
   let access = null;                 // JWT access token
-  let currentEmail = null;           // email, чтобы фильтровать "My Ads"
-  let adsPage = 1;                   // пагинация
+  let currentEmail = null;           // email for old-style client filtering (kept for reference)
+  let adsPage = 1;                   // pagination
   const API = "/api";
 
   // ======== HELPERS ========
   function hAuth() { return access ? { "Authorization": "Bearer " + access } : {}; }
   function enc(obj) { return new URLSearchParams(obj).toString(); }
   function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
-
   function showTabs(show){ document.getElementById('tabs').style.display = show ? 'flex' : 'none'; }
-
   function setAuthStatus(txt){ document.getElementById('authStatus').textContent = txt || ''; }
 
   // tabs
@@ -193,7 +189,7 @@
   document.getElementById('loginBtn').addEventListener('click', async ()=>{
     const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
-    // ВАЖНО: SimpleJWT ждёт email+password (USERNAME_FIELD = 'email')
+    // SimpleJWT expects email+password (USERNAME_FIELD = 'email')
     const res = await fetch(`${API}/token/`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -217,7 +213,7 @@
     showTabs(false);
   });
 
-    // ======== REGISTER ========
+  // ======== REGISTER ========
   document.getElementById('registerForm').addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -239,8 +235,33 @@
     }
   });
 
+  // ======== AVAILABILITY (state + helpers) ========
+  const availCache = {}; // { adId: [ {date_from, date_to, status}, ... ] }
 
+  async function fetchAvailability(adId){
+    if(!adId) return [];
+    const res = await fetch(`/api/ads/${adId}/availability/`); // public endpoint
+    if(!res.ok) return [];
+    const data = await res.json();
+    availCache[adId] = data || [];
+    return availCache[adId];
+  }
 
+  function overlapsBusy(adId, fromStr, toStr){
+    if(!adId || !fromStr || !toStr) return false;
+    const from = new Date(fromStr);
+    const to   = new Date(toStr);
+    if(isNaN(from) || isNaN(to)) return false;
+
+    const busy = availCache[adId] || [];
+    for(const b of busy){
+      const bf = new Date(b.date_from);
+      const bt = new Date(b.date_to);
+      // inclusive overlap check
+      if(!(to < bf || from > bt)){ return true; }
+    }
+    return false;
+  }
 
   // ======== ADS LIST + FILTERS ========
   const adsList = document.getElementById('adsList');
@@ -249,7 +270,7 @@
   async function loadAds(paramsStr){
     const filterForm = document.getElementById('adsFilter');
     const fd = new FormData(filterForm);
-    if(paramsStr){ /* пришло извне */ }
+    if(paramsStr){ /* external */ }
     else { fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
     const res = await fetch(`${API}/ads/?${paramsStr}`, { headers: hAuth() });
     if(!res.ok){ adsList.innerHTML = `<div class="center muted">Error ${res.status}</div>`; return; }
@@ -281,10 +302,25 @@
 
     // attach Book handlers
     adsList.querySelectorAll('button[data-action="book"]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
+      btn.addEventListener('click', async ()=>{
         if(!access){ alert('Please login first'); return; }
-        document.getElementById('bookAdId').value = btn.dataset.ad;
-        document.getElementById('bookMsg').textContent = '';
+        const adId = btn.dataset.ad;
+        document.getElementById('bookAdId').value = adId;
+        const msg = document.getElementById('bookMsg');
+        msg.textContent = '';
+
+        // load availability and live-validate dates
+        await fetchAvailability(adId);
+        const [df, dt] = document.querySelectorAll('#bookForm input[type="date"]');
+        const submitBtn = document.querySelector('#bookForm button.btn');
+        const validate = ()=>{
+          const bad = overlapsBusy(adId, df.value, dt.value);
+          submitBtn.disabled = bad;
+          msg.textContent = bad ? '❌ These dates overlap with a busy interval.' : '';
+        };
+        df.onchange = dt.onchange = validate;
+        validate();
+
         document.getElementById('bookModal').showModal();
       })
     })
@@ -331,28 +367,26 @@
     else { msg.textContent='❌ Failed to create'; }
   });
 
-  // ======== MY ADS (фильтруем по owner == currentEmail) ========
+  // ======== MY ADS (server-side filter) ========
   async function loadMyAds(){
-  const box = document.getElementById('myAdsList');
-  if(!access){ box.textContent='Login to see your ads.'; return; }
-
-  const res = await fetch(`${API}/ads/?page_size=50&mine=1`, { headers: hAuth() });
-  if(!res.ok){ box.textContent='Error loading'; return; }
-  const data = await res.json();
-  const mine = data.results || [];
-
-  if(!mine.length){ box.textContent='No ads yet.'; return; }
-  box.innerHTML = mine.map(ad => `
-    <div class="card">
-      <div class="row" style="justify-content:space-between">
-        <div><b>${esc(ad.title)}</b><div class="muted">${esc(ad.location)}</div></div>
-        <div class="right">
-          <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
-          <div class="muted">ID: ${ad.id}</div>
+    const box = document.getElementById('myAdsList');
+    if(!access){ box.textContent='Login to see your ads.'; return; }
+    const res = await fetch(`${API}/ads/?page_size=50&mine=1`, { headers: hAuth() });
+    if(!res.ok){ box.textContent='Error loading'; return; }
+    const data = await res.json();
+    const mine = data.results || [];
+    if(!mine.length){ box.textContent='No ads yet.'; return; }
+    box.innerHTML = mine.map(ad => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div><b>${esc(ad.title)}</b><div class="muted">${esc(ad.location)}</div></div>
+          <div class="right">
+            <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
+            <div class="muted">ID: ${ad.id}</div>
+          </div>
         </div>
       </div>
-    </div>
-  `).join('');
+    `).join('');
   }
 
   // ======== BOOKINGS ========
@@ -361,10 +395,10 @@
     if(!access){ box.textContent='Login to see your bookings.'; return; }
     const res = await fetch(`${API}/bookings/`, { headers:hAuth() });
     if(!res.ok){ box.textContent='Error loading'; return; }
-    const list = await res.json(); // вью возвращает список (не пагинированный)
+    const list = await res.json(); // not paginated by design
     if(!list.length){ box.textContent='No bookings yet.'; return; }
 
-    // Чтобы понять, владелец ли я объявления — подтянем owner для каждого ad
+    // cache owners for display
     const adOwnersCache = {};
     async function getAdOwner(adId){
       if(adOwnersCache[adId]) return adOwnersCache[adId];
@@ -375,7 +409,6 @@
       return adOwnersCache[adId];
     }
 
-    // Рендер с кнопками в зависимости от роли
     box.innerHTML = '';
     for(const b of list){
       const ownerEmail = await getAdOwner(b.ad);
@@ -416,22 +449,28 @@
     });
   }
 
-  // создать бронь из формы в разделе Bookings
+  // create booking form (My Bookings)
   document.getElementById('bookingCreate').addEventListener('submit', async (e)=>{
     e.preventDefault();
     if(!access){ alert('Login required'); return; }
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
+
+    // availability guard
+    await fetchAvailability(payload.ad);
+    if(overlapsBusy(payload.ad, payload.date_from, payload.date_to)){
+      document.getElementById('bookingCreateMsg').textContent = '❌ These dates overlap with a busy interval.';
+      return;
+    }
+
     const res = await fetch(`${API}/bookings/`, {
       method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
-    const body = await res.json().catch(()=> ({}))
+    const body = await res.json().catch(()=> ({}));
     const msg = document.getElementById('bookingCreateMsg');
     if(res.ok){ msg.textContent='✅ Booking created'; e.target.reset(); loadBookings(); }
-    else {
-        msg.textContent = '❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking');
-}
+    else { msg.textContent='❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking'); }
   });
 
   // ======== BOOK FROM AD CARD (modal) ========
@@ -442,23 +481,29 @@
     if(!access){ alert('Login required'); return; }
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
+
+    // availability guard
+    if(overlapsBusy(payload.ad, payload.date_from, payload.date_to)){
+      document.getElementById('bookMsg').textContent = '❌ These dates overlap with a busy interval.';
+      return;
+    }
+
     const res = await fetch(`${API}/bookings/`, {
-  method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
-  body: JSON.stringify(payload)
-});
+      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
     const msg = document.getElementById('bookMsg');
     const body = await res.json().catch(()=> ({}));
     if(res.ok){
-    msg.textContent='✅ Booking created';
-    setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600);
-}   else {
-    msg.textContent = '❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking');
-}
+      msg.textContent='✅ Booking created';
+      setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600);
+    } else {
+      msg.textContent = '❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking');
+    }
   });
 
   // ======== INIT ========
-  // первая загрузка объявлений (публично)
-  loadAds();
+  loadAds(); // public list on first load
 </script>
 </body>
 </html>

@@ -9,7 +9,8 @@ from drf_spectacular.utils import (extend_schema_view, extend_schema, OpenApiPar
                                    OpenApiResponse)
 
 from .models import Ad, Booking, AdImage
-from .serializers import AdSerializer, BookingSerializer, AdImageSerializer, AdImageUploadSerializer
+from .serializers import (AdSerializer, BookingSerializer, AdImageSerializer, AdImageUploadSerializer,
+                          AvailabilityItemSerializer)
 from .permissions import IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner
 from .pagination import AdPagination
 
@@ -246,6 +247,36 @@ class AdViewSet(viewsets.ModelViewSet):
         created = [AdImage.objects.create(ad=ad, image=f, caption=caption) for f in files]
         return Response(AdImageSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
 
+    @extend_schema(
+        summary="Ad availability (busy intervals)",
+        description="Returns date ranges blocked by PENDING or CONFIRMED bookings.",
+        auth=[],
+        responses={200: OpenApiResponse(response=AvailabilityItemSerializer(many=True))},
+        parameters=[
+            OpenApiParameter(
+                name="status",
+                type=OpenApiTypes.STR,
+                description="Optional: limit to single status. One of: PENDING, CONFIRMED.",
+                examples=[OpenApiExample("Only confirmed", value="CONFIRMED")]
+            ),
+        ],
+    )
+    @action(detail=True, methods=['get'], url_path='availability', permission_classes=[permissions.AllowAny])
+    def availability(self, request, pk=None):
+        """Return busy intervals for calendar (PENDING and/or CONFIRMED)."""
+        ad = self.get_object()
+
+        # base queryset: busy bookings
+        qs = ad.bookings.filter(status__in=[Booking.PENDING, Booking.CONFIRMED])
+
+        # optional filter by status
+        status_param = (request.query_params.get('status') or '').upper().strip()
+        if status_param in (Booking.PENDING, Booking.CONFIRMED):
+            qs = qs.filter(status=status_param)
+
+        qs = qs.order_by('date_from').values('date_from', 'date_to', 'status')
+        data = AvailabilityItemSerializer(qs, many=True).data
+        return Response(data, status=status.HTTP_200_OK)
 
 # -------------------------
 # Booking ViewSet

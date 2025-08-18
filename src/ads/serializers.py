@@ -49,3 +49,10 @@ class BookingSerializer(serializers.ModelSerializer):
         model = Booking
         fields = ("id", "ad", "tenant", "date_from", "date_to", "status", "created_at")
         read_only_fields = ("id", "tenant", "status", "created_at")
+
+class AvailabilityItemSerializer(serializers.Serializer):
+    """Public shape for busy date ranges."""
+    date_from = serializers.DateField()
+    date_to = serializers.DateField()
+    status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
+
