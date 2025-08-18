@@ -191,41 +191,59 @@
   </div>
 </dialog>
 
+<!-- Ad details modal -->
+<dialog id="adModal">
+  <div class="modal" style="min-width:680px; max-width:900px">
+    <div class="row" style="justify-content:space-between; align-items:center;">
+      <h3 id="adTitle" style="margin:0;">Ad</h3>
+      <button type="button" class="btn-outline" id="adClose">Close</button>
+    </div>
+    <div id="adMeta" class="muted" style="margin:6px 0 12px;"></div>
+    <div id="adGallery" class="row" style="gap:8px; overflow:auto;"></div>
+    <div id="adDesc" class="muted" style="margin:12px 0;"></div>
+    <div class="row" style="justify-content:flex-end; gap:8px; margin-top:10px;">
+      <button class="btn-outline" id="adReviewsBtn">Reviews</button>
+      <button class="btn" id="adBookBtn">Book</button>
+    </div>
+  </div>
+</dialog>
+
 <script>
   // ======== STATE ========
-  let access = null;                 // JWT access token
-  let currentEmail = null;
-  let adsPage = 1;
-  const API = "/api";
+  var access = null;                 // JWT access token
+  var currentEmail = null;
+  var adsPage = 1;
+  var API = "/api";
 
   // ======== HELPERS ========
   function hAuth() { return access ? { "Authorization": "Bearer " + access } : {}; }
   function enc(obj) { return new URLSearchParams(obj).toString(); }
-  function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+  function esc(s){return String(s||'').replace(/[&<>"']/g,function(m){return ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]);})}
   function showTabs(show){ document.getElementById('tabs').style.display = show ? 'flex' : 'none'; }
   function setAuthStatus(txt){ document.getElementById('authStatus').textContent = txt || ''; }
+  function fmtAvg(x){ var n = Number(x); return isFinite(n) ? n.toFixed(1) : '—'; }
 
   // tabs
-  document.querySelectorAll('.tab').forEach(b=>{
-    b.addEventListener('click', ()=>{
-      document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
-      document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+  Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
+    b.addEventListener('click', function(){
+      Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(x){ x.classList.remove('active'); });
+      Array.prototype.forEach.call(document.querySelectorAll('.section'), function(x){ x.classList.remove('active'); });
       b.classList.add('active');
-      document.getElementById(b.dataset.tab).classList.add('active');
-    })
+      document.getElementById(b.getAttribute('data-tab')).classList.add('active');
+    });
   });
 
   // ======== AUTH ========
-  document.getElementById('loginBtn').addEventListener('click', async ()=>{
-    const email = document.getElementById('email').value.trim();
-    const password = document.getElementById('password').value;
-    const res = await fetch(`${API}/token/`, {
+  document.getElementById('loginBtn').addEventListener('click', async function(){
+    var email = document.getElementById('email').value.trim();
+    var password = document.getElementById('password').value;
+    var res = await fetch(API + "/token/", {
       method:'POST',
       headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ email, password })
+      body: JSON.stringify({ email: email, password: password })
     });
     if(res.ok){
-      const data = await res.json();
+      var data = await res.json();
       access = data.access;
       currentEmail = email;
       setAuthStatus('✅ Logged in as ' + email);
@@ -237,48 +255,49 @@
     }
   });
 
-  document.getElementById('logoutBtn').addEventListener('click', ()=>{
+  document.getElementById('logoutBtn').addEventListener('click', function(){
     access = null; currentEmail = null;
     setAuthStatus('Logged out');
     showTabs(false);
   });
 
   // REGISTER
-  document.getElementById('registerForm').addEventListener('submit', async (e)=>{
+  document.getElementById('registerForm').addEventListener('submit', async function(e){
     e.preventDefault();
-    const fd = new FormData(e.target);
-    const payload = Object.fromEntries(fd.entries());
+    var fd = new FormData(e.target);
+    var payload = Object.fromEntries(fd.entries());
 
-    const res = await fetch(`${API}/users/register/`, {
+    var res = await fetch(API + "/users/register/", {
       method:'POST',
       headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
     });
 
-    const msg = document.getElementById('registerMsg');
+    var msg = document.getElementById('registerMsg');
     if(res.ok){
       msg.textContent = "✅ Registration successful! You can login now.";
       e.target.reset();
     } else {
-      const err = await res.json().catch(()=> ({}));
+      var err = {};
+      try { err = await res.json(); } catch(e){}
       msg.textContent = "❌ Failed: " + (err.detail || JSON.stringify(err));
     }
   });
 
   // ======== TOP SEARCHES ========
   async function loadTopSearches(){
-    const box = document.getElementById('topSearches');
-    const res = await fetch(`${API}/search-history/top/?limit=10`);
+    var box = document.getElementById('topSearches');
+    var res = await fetch(API + "/search-history/top/?limit=10");
     if(!res.ok){ box.style.display='none'; return; }
-    const items = await res.json(); // [{q:'', count:n}]
+    var items = await res.json(); // [{q:'', count:n}]
     if(!items.length){ box.style.display='none'; return; }
     box.style.display='flex';
-    box.innerHTML = `<span class="muted">Top searches:</span>` +
-      items.map(i => `<span class="chip" data-q="${esc(i.q)}">${esc(i.q||'(empty)')} · ${i.count}</span>`).join('');
-    box.querySelectorAll('.chip').forEach(ch=>{
-      ch.addEventListener('click', ()=>{
-        const q = ch.dataset.q === '(empty)' ? '' : ch.dataset.q;
-        const f = document.getElementById('adsFilter');
+    box.innerHTML = '<span class="muted">Top searches:</span>' +
+      items.map(function(i){ return '<span class="chip" data-q="' + esc(i.q) + '">' + esc(i.q||'(empty)') + ' · ' + i.count + '</span>'; }).join('');
+    Array.prototype.forEach.call(box.querySelectorAll('.chip'), function(ch){
+      ch.addEventListener('click', function(){
+        var q = ch.getAttribute('data-q') === '(empty)' ? '' : ch.getAttribute('data-q');
+        var f = document.getElementById('adsFilter');
         f.q.value = q || '';
         adsPage = 1;
         loadAds();
@@ -287,217 +306,209 @@
   }
 
   // ======== ADS LIST + FILTERS ========
-  const adsList = document.getElementById('adsList');
-  const adsPager = document.getElementById('adsPager');
+  var adsList = document.getElementById('adsList');
+  var adsPager = document.getElementById('adsPager');
 
   async function loadAds(paramsStr){
-    const filterForm = document.getElementById('adsFilter');
-    const fd = new FormData(filterForm);
+    var filterForm = document.getElementById('adsFilter');
+    var fd = new FormData(filterForm);
     if(paramsStr){ /* external */ }
     else { fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
-    const res = await fetch(`${API}/ads/?${paramsStr}`, { headers: hAuth() });
-    if(!res.ok){ adsList.innerHTML = `<div class="center muted">Error ${res.status}</div>`; return; }
-    const data = await res.json();
+    var res = await fetch(API + "/ads/?" + paramsStr, { headers: hAuth() });
+    if(!res.ok){ adsList.innerHTML = '<div class="center muted">Error ' + res.status + '</div>'; return; }
+    var data = await res.json();
     renderAds(data.results || []);
     renderAdsPager(data.count || 0, Number(fd.get('page_size')||10));
   }
 
   function renderAds(items){
-  if(!items.length){ adsList.innerHTML = '<div class="center muted">No ads found.</div>'; return; }
-  adsList.innerHTML = items.map(ad => `
-    <div class="card">
-      <div class="row" style="justify-content:space-between; align-items:flex-start">
-        <div>
-          <div><b>${esc(ad.title)}</b></div>
-          <div class="muted">${esc(ad.location)} · ${ad.rooms} rooms · ${esc(ad.housing_type||'')}</div>
-          <div class="rating">⭐ ${ad.average_rating?.toFixed ? ad.average_rating.toFixed(1) : (ad.average_rating ?? '—')}
-            · 👁 ${ad.views_count ?? 0}
-            · 💬 ${ad.reviews_count ?? 0}
-          </div>
-        </div>
-        <div class="right">
-          <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
-          <div class="muted">ID: ${ad.id}</div>
-        </div>
-      </div>
-      <div class="muted" style="margin-top:6px">${esc(ad.description||'')}</div>
-      <div class="row" style="justify-content:flex-end; margin-top:8px">
-        <button class="btn-outline" data-ad="${ad.id}" data-action="reviews">Reviews</button>
-        <button class="btn-outline" data-ad="${ad.id}" data-action="book">Book</button>
-      </div>
-    </div>
-  `).join('');
+    if(!items.length){ adsList.innerHTML = '<div class="center muted">No ads found.</div>'; return; }
+    adsList.innerHTML = items.map(function(ad){
+      return '\
+      <div class="card ad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
+        <div class="row" style="justify-content:space-between; align-items:flex-start">\
+          <div>\
+            <div><b>'+ esc(ad.title) +'</b></div>\
+            <div class="muted">'+ esc(ad.location) +' · '+ ad.rooms +' rooms · '+ esc(ad.housing_type||'') +'</div>\
+            <div class="rating">⭐ '+ fmtAvg(ad.average_rating) +'\
+              · 👁 '+ Number(ad.views_count || 0) +'\
+              · 💬 '+ Number(ad.reviews_count || 0) +'\
+            </div>\
+          </div>\
+          <div class="right">\
+            <div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div>\
+            <div class="muted">ID: '+ ad.id +'</div>\
+          </div>\
+        </div>\
+        <div class="muted" style="margin-top:6px">'+ esc(ad.description||'') +'</div>\
+        <div class="row" style="justify-content:flex-end; margin-top:8px">\
+          <button class="btn-outline" data-ad="'+ ad.id +'" data-action="reviews" onclick="event.stopPropagation()">Reviews</button>\
+          <button class="btn-outline" data-ad="'+ ad.id +'" data-action="book" onclick="event.stopPropagation()">Book</button>\
+        </div>\
+      </div>';
+    }).join('');
+
+    // Card click -> open details
+    Array.prototype.forEach.call(adsList.querySelectorAll('.ad-card'), function(card){
+      card.addEventListener('click', function(){
+        var id = Number(card.getAttribute('data-ad'));
+        openAdModal(id);
+      });
+    });
 
     // Book handlers
-    adsList.querySelectorAll('button[data-action="book"]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
+    Array.prototype.forEach.call(adsList.querySelectorAll('button[data-action="book"]'), function(btn){
+      btn.addEventListener('click', function(){
         if(!access){ alert('Please login first'); return; }
-        document.getElementById('bookAdId').value = btn.dataset.ad;
+        document.getElementById('bookAdId').value = btn.getAttribute('data-ad');
         document.getElementById('bookMsg').textContent = '';
         document.getElementById('bookModal').showModal();
-      })
+      });
     });
 
     // Reviews handlers
-    adsList.querySelectorAll('button[data-action="reviews"]').forEach(btn=>{
-      btn.addEventListener('click', ()=>{
-        openReviewsModal(Number(btn.dataset.ad));
+    Array.prototype.forEach.call(adsList.querySelectorAll('button[data-action="reviews"]'), function(btn){
+      btn.addEventListener('click', function(){
+        openReviewsModal(Number(btn.getAttribute('data-ad')));
       });
     });
   }
 
   function renderAdsPager(count, pageSize){
-    const total = Math.max(1, Math.ceil(count / pageSize));
-    adsPager.innerHTML = `
-      <div class="muted">Total: ${count}</div>
-      <div class="row">
-        <button class="btn-outline" id="prevAds" ${adsPage<=1?'disabled':''}>Prev</button>
-        <div class="muted" style="padding:8px 12px">Page ${adsPage} / ${total}</div>
-        <button class="btn-outline" id="nextAds" ${adsPage>=total?'disabled':''}>Next</button>
-      </div>
-    `;
-    const prev = document.getElementById('prevAds');
-    const next = document.getElementById('nextAds');
-    prev && prev.addEventListener('click', ()=>{ adsPage=Math.max(1, adsPage-1); loadAds(); });
-    next && next.addEventListener('click', ()=>{ adsPage=adsPage+1; loadAds(); });
+    var total = Math.max(1, Math.ceil(count / pageSize));
+    adsPager.innerHTML = '\
+      <div class="muted">Total: '+ count +'</div>\
+      <div class="row">\
+        <button class="btn-outline" id="prevAds" '+ (adsPage<=1?'disabled':'') +'>Prev</button>\
+        <div class="muted" style="padding:8px 12px">Page '+ adsPage +' / '+ total +'</div>\
+        <button class="btn-outline" id="nextAds" '+ (adsPage>=total?'disabled':'') +'>Next</button>\
+      </div>';
+    var prev = document.getElementById('prevAds');
+    var next = document.getElementById('nextAds');
+    if(prev){ prev.addEventListener('click', function(){ adsPage=Math.max(1, adsPage-1); loadAds(); }); }
+    if(next){ next.addEventListener('click', function(){ adsPage=adsPage+1; loadAds(); }); }
   }
 
-  document.getElementById('adsFilter').addEventListener('submit', (e)=>{
+  document.getElementById('adsFilter').addEventListener('submit', function(e){
     e.preventDefault(); adsPage=1; loadAds();
   });
-  document.getElementById('resetAds').addEventListener('click', ()=>{
+  document.getElementById('resetAds').addEventListener('click', function(){
     document.getElementById('adsFilter').reset(); adsPage=1; loadAds();
   });
 
   // ======== CREATE AD ========
-  document.getElementById('adCreate').addEventListener('submit', async (e)=>{
+  document.getElementById('adCreate').addEventListener('submit', async function(e){
     e.preventDefault();
     if(!access){ alert('Login required'); return; }
-    const fd = new FormData(e.target);
-    const payload = Object.fromEntries(fd.entries());
+    var fd = new FormData(e.target);
+    var payload = Object.fromEntries(fd.entries());
     payload.price = payload.price ? Number(payload.price) : null;
     payload.rooms = payload.rooms ? Number(payload.rooms) : null;
     payload.is_active = !!fd.get('is_active');
-    const res = await fetch(`${API}/ads/`, {
-      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+    var res = await fetch(API + "/ads/", {
+      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}),
       body: JSON.stringify(payload)
     });
-    const msg = document.getElementById('adCreateMsg');
+    var msg = document.getElementById('adCreateMsg');
     if(res.ok){ msg.textContent='✅ Ad created'; e.target.reset(); loadAds(); loadMyAds(); }
     else { msg.textContent='❌ Failed to create'; }
   });
 
   // ======== MY ADS ========
   async function loadMyAds(){
-    const box = document.getElementById('myAdsList');
+    var box = document.getElementById('myAdsList');
     if(!access || !currentEmail){ box.textContent='Login to see your ads.'; return; }
-    const res = await fetch(`${API}/ads/?mine=true&page_size=50`, { headers: hAuth() });
+    var res = await fetch(API + "/ads/?mine=true&page_size=50", { headers: hAuth() });
     if(!res.ok){ box.textContent='Error loading'; return; }
-    const data = await res.json();
-    const mine = data.results || [];
+    var data = await res.json();
+    var mine = data.results || [];
     if(!mine.length){ box.textContent='No ads yet.'; return; }
-    box.innerHTML = mine.map(ad => `
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <div><b>${esc(ad.title)}</b><div class="muted">${esc(ad.location)}</div></div>
-          <div class="right">
-            <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
-            <div class="muted">ID: ${ad.id}</div>
-          </div>
-        </div>
-      </div>
-    `).join('');
+    box.innerHTML = mine.map(function(ad){
+      return '\
+      <div class="card">\
+        <div class="row" style="justify-content:space-between">\
+          <div><b>'+ esc(ad.title) +'</b><div class="muted">'+ esc(ad.location) +'</div></div>\
+          <div class="right">\
+            <div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div>\
+            <div class="muted">ID: '+ ad.id +'</div>\
+          </div>\
+        </div>\
+      </div>';
+    }).join('');
   }
 
   // ======== BOOKINGS ========
   async function loadBookings(){
-    const box = document.getElementById('bookingsList');
+    var box = document.getElementById('bookingsList');
     if(!access){ box.textContent='Login to see your bookings.'; return; }
-    const res = await fetch(`${API}/bookings/`, { headers:hAuth() });
+    var res = await fetch(API + "/bookings/", { headers:hAuth() });
     if(!res.ok){ box.textContent='Error loading'; return; }
-    const list = await res.json();
+    var list = await res.json();
     if(!list.length){ box.textContent='No bookings yet.'; return; }
 
     // Load owner emails cache for each ad
-    const adOwnersCache = {};
+    var adOwnersCache = {};
     async function getAdOwner(adId){
       if(adOwnersCache[adId]) return adOwnersCache[adId];
-      const r = await fetch(`${API}/ads/${adId}/`);
+      var r = await fetch(API + "/ads/" + adId + "/");
       if(!r.ok) return null;
-      const ad = await r.json();
+      var ad = await r.json();
       adOwnersCache[adId] = ad.owner || null;
       return adOwnersCache[adId];
     }
 
     box.innerHTML = '';
-    for(const b of list){
-      const ownerEmail = await getAdOwner(b.ad);
-      const iAmOwner = currentEmail && ownerEmail && currentEmail.toLowerCase() === ownerEmail.toLowerCase();
-      const iAmTenant = currentEmail && b.tenant && currentEmail.toLowerCase() === b.tenant.toLowerCase();
+    for (var i=0; i<list.length; i++){
+      var b = list[i];
+      var ownerEmail = await getAdOwner(b.ad);
+      var iAmOwner = currentEmail && ownerEmail && currentEmail.toLowerCase() === ownerEmail.toLowerCase();
+      var iAmTenant = currentEmail && b.tenant && currentEmail.toLowerCase() === b.tenant.toLowerCase();
 
-      const el = document.createElement('div');
+      var el = document.createElement('div');
       el.className = 'card';
-      el.innerHTML = `
-        <div class="row" style="justify-content:space-between">
-          <div>
-            <div><b>Booking #${b.id}</b> · <span class="pill">${esc(b.status)}</span></div>
-            <div class="muted">Ad: ${b.ad} · ${esc(b.date_from)} → ${esc(b.date_to)}</div>
-            <div class="muted">Tenant: ${esc(b.tenant || '')} · Owner: ${esc(ownerEmail || '')}</div>
-          </div>
-          <div class="row">
-            ${iAmOwner && b.status==='PENDING' ? `
-              <button class="btn-outline" data-act="confirm" data-id="${b.id}">Confirm</button>
-              <button class="btn-outline" data-act="reject" data-id="${b.id}">Reject</button>` : ''
-            }
-            ${iAmTenant && b.status!=='CANCELLED' ? `
-              <button class="btn-outline" data-act="cancel" data-id="${b.id}">Cancel</button>` : ''
-            }
-          </div>
-        </div>
-      `;
+      el.innerHTML = '\
+        <div class="row" style="justify-content:space-between">\
+          <div>\
+            <div><b>Booking #'+ b.id +'</b> · <span class="pill">'+ esc(b.status) +'</span></div>\
+            <div class="muted">Ad: '+ b.ad +' · '+ esc(b.date_from) +' → '+ esc(b.date_to) +'</div>\
+            <div class="muted">Tenant: '+ esc(b.tenant || '') +' · Owner: '+ esc(ownerEmail || '') +'</div>\
+          </div>\
+          <div class="row">\
+            '+ (iAmOwner && b.status==='PENDING' ? '\
+              <button class="btn-outline" data-act="confirm" data-id="'+ b.id +'">Confirm</button>\
+              <button class="btn-outline" data-act="reject" data-id="'+ b.id +'">Reject</button>' : '') +'\
+            '+ (iAmTenant && b.status!=='CANCELLED' ? '\
+              <button class="btn-outline" data-act="cancel" data-id="'+ b.id +'">Cancel</button>' : '') +'\
+          </div>\
+        </div>';
       box.appendChild(el);
     }
 
     // handlers
-    box.querySelectorAll('button[data-act]').forEach(btn=>{
-      btn.addEventListener('click', async ()=>{
-        const id = btn.dataset.id, act = btn.dataset.act;
-        const r = await fetch(`${API}/bookings/${id}/${act}/`, { method:'POST', headers:hAuth() });
-        if(!r.ok) alert(`Action failed (${act})`);
+    Array.prototype.forEach.call(box.querySelectorAll('button[data-act]'), function(btn){
+      btn.addEventListener('click', async function(){
+        var id = btn.getAttribute('data-id'), act = btn.getAttribute('data-act');
+        var r = await fetch(API + "/bookings/" + id + "/" + act + "/", { method:'POST', headers:hAuth() });
+        if(!r.ok) alert('Action failed ('+act+')');
         await loadBookings();
       });
     });
   }
 
   // Create booking (form)
-  document.getElementById('bookingCreate').addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    if(!access){ alert('Login required'); return; }
-    const fd = new FormData(e.target);
-    const payload = Object.fromEntries(fd.entries());
-    const res = await fetch(`${API}/bookings/`, {
-      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    const msg = document.getElementById('bookingCreateMsg');
-    if(res.ok){ msg.textContent='✅ Booking created'; e.target.reset(); loadBookings(); }
-    else { msg.textContent='❌ Failed to create booking'; }
-  });
-
-  // Book from ad card (modal)
   const bookModal = document.getElementById('bookModal');
-  document.getElementById('bookCancel').addEventListener('click', ()=> bookModal.close());
-  document.getElementById('bookForm').addEventListener('submit', async (e)=>{
+  document.getElementById('bookCancel').addEventListener('click', function(){ bookModal.close(); });
+  document.getElementById('bookForm').addEventListener('submit', async function(e){
     e.preventDefault();
     if(!access){ alert('Login required'); return; }
-    const fd = new FormData(e.target);
-    const payload = Object.fromEntries(fd.entries());
-    const res = await fetch(`${API}/bookings/`, {
-      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+    var fd = new FormData(e.target);
+    var payload = Object.fromEntries(fd.entries());
+    var res = await fetch(API + "/bookings/", {
+      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}),
       body: JSON.stringify(payload)
     });
-    const msg = document.getElementById('bookMsg');
-    if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600); }
+    var msg = document.getElementById('bookMsg');
+    if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(function(){ bookModal.close(); loadBookings(); }, 600); }
     else { msg.textContent='❌ Failed to create booking'; }
   });
 
@@ -506,7 +517,7 @@
   const reviewsList = document.getElementById('reviewsList');
   const reviewForm  = document.getElementById('reviewForm');
   const reviewMsg   = document.getElementById('reviewMsg');
-  document.getElementById('reviewsClose').addEventListener('click', ()=> reviewsModal.close());
+  document.getElementById('reviewsClose').addEventListener('click', function(){ reviewsModal.close(); });
 
   function openReviewsModal(adId){
     document.getElementById('revAdId').textContent = adId;
@@ -519,45 +530,78 @@
   }
 
   async function loadReviews(adId){
-    const res = await fetch(`${API}/reviews/?ad=${adId}&ordering=-created_at`);
+    var res = await fetch(API + "/reviews/?ad=" + adId + "&ordering=-created_at");
     if(!res.ok){ reviewsList.textContent = 'Failed to load reviews'; return; }
-    const items = (await res.json()).results || (Array.isArray(await res.json()) ? await res.json() : []);
+    var full = await res.json();
+    var items = full.results || (Array.isArray(full) ? full : []);
     if(!items.length){ reviewsList.innerHTML = '<div class="muted">No reviews yet.</div>'; return; }
-    const avg = (items.reduce((s, r)=> s + Number(r.rating||0), 0) / items.length).toFixed(1);
-    reviewsList.innerHTML = `
-      <div class="rating">⭐ ${avg} · ${items.length} review(s)</div>
-      <div style="margin-top:8px;"></div>
-      ${items.map(r => `
-        <div class="card" style="margin:8px 0;">
-          <div><b>${esc(r.tenant || '')}</b> · <span class="pill">${esc(r.rating)}/5</span></div>
-          <div class="muted">${esc(r.text || '')}</div>
-          <div class="muted">${esc(r.created_at || '')}</div>
-        </div>
-      `).join('')}
-    `;
+    var sum = 0; for (var i=0;i<items.length;i++){ sum += Number(items[i].rating || 0); }
+    var avg = (sum / items.length).toFixed(1);
+    reviewsList.innerHTML = '\
+      <div class="rating">⭐ '+ avg +' · '+ items.length +' review(s)</div>\
+      <div style="margin-top:8px;"></div>\
+      ' + items.map(function(r){ return '\
+        <div class="card" style="margin:8px 0;">\
+          <div><b>'+ esc(r.tenant || '') +'</b> · <span class="pill">'+ esc(r.rating) +'/5</span></div>\
+          <div class="muted">'+ esc(r.text || '') +'</div>\
+          <div class="muted">'+ esc(r.created_at || '') +'</div>\
+        </div>'; }).join('');
+
   }
 
-  reviewForm.addEventListener('submit', async (e)=>{
-    e.preventDefault();
-    if(!access){ alert('Login required'); return; }
-    const fd = new FormData(e.target);
-    const payload = Object.fromEntries(fd.entries());
-    // cast rating to number
-    payload.rating = Number(payload.rating);
-    const res = await fetch(`${API}/reviews/`, {
-      method:'POST',
-      headers:{...hAuth(), 'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
-    if(res.ok){
-      reviewMsg.textContent = '✅ Review added';
-      e.target.reset();
-      loadReviews(document.getElementById('reviewAdId').value);
+  // ======== AD DETAILS MODAL ========
+  const adModal = document.getElementById('adModal');
+  const adClose = document.getElementById('adClose');
+  const adTitle = document.getElementById('adTitle');
+  const adMeta  = document.getElementById('adMeta');
+  const adDesc  = document.getElementById('adDesc');
+  const adGallery = document.getElementById('adGallery');
+  const adBookBtn = document.getElementById('adBookBtn');
+  const adReviewsBtn = document.getElementById('adReviewsBtn');
+
+  adClose.addEventListener('click', function(){ adModal.close(); });
+
+  async function openAdModal(adId){
+    // GET /api/ads/{id}/ — backend will create AdView with 6h dedup
+    var res = await fetch(API + "/ads/" + adId + "/");
+    if(!res.ok){ alert('Failed to load ad'); return; }
+    var ad = await res.json();
+
+    adTitle.textContent = ad.title || ('Ad #' + adId);
+    adMeta.innerHTML = ''
+      + '<span>' + esc(ad.location || '') + '</span>'
+      + ' · <span>' + (ad.rooms || 0) + ' rooms</span>'
+      + ' · <span>' + esc(ad.housing_type || '') + '</span>'
+      + ' · <b>€' + Number(ad.price).toLocaleString() + '</b>'
+      + '<br>'
+      + '<span class="rating">⭐ ' + fmtAvg(ad.average_rating) + '</span>'
+      + ' · <span>👁 ' + Number(ad.views_count || 0) + '</span>'
+      + ' · <span>💬 ' + Number(ad.reviews_count || 0) + '</span>';
+
+    adDesc.textContent = ad.description || '';
+
+    if(Array.isArray(ad.images) && ad.images.length){
+      adGallery.innerHTML = ad.images.map(function(img){
+        return '<img src="' + img.image + '" alt="' + esc(img.caption||'') + '" style="height:120px; border-radius:8px; border:1px solid #eee;">';
+      }).join('');
     } else {
-      const err = await res.json().catch(()=> ({}));
-      reviewMsg.textContent = '❌ ' + (err.detail || JSON.stringify(err));
+      adGallery.innerHTML = '<div class="muted">No images.</div>';
     }
-  });
+
+    adBookBtn.onclick = function(e){
+      e.preventDefault();
+      if(!access){ alert('Please login first'); return; }
+      document.getElementById('bookAdId').value = adId;
+      document.getElementById('bookMsg').textContent = '';
+      bookModal.showModal();
+    };
+    adReviewsBtn.onclick = function(e){
+      e.preventDefault();
+      openReviewsModal(adId);
+    };
+
+    adModal.showModal();
+  }
 
   // ======== INIT ========
   loadTopSearches();
