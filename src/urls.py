@@ -16,10 +16,12 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import TemplateView
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from drf_spectacular.views import SpectacularAPIView, SpectacularSwaggerView
 
 urlpatterns = [
+    path("frontend/", TemplateView.as_view(template_name="frontend/index.html")),
     path('admin/', admin.site.urls),
     path('api/', include('src.users.urls')),
     path('api/', include('src.ads.urls')),

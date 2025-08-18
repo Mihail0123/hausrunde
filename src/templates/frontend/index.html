@@ -1,0 +1,454 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Hausrunde Test Frontend</title>
+  <style>
+    body { font-family: Arial, sans-serif; background:#f5f5f5; margin:0; padding:24px;
+           display:flex; justify-content:center; }
+    .container { width: 100%; max-width: 980px; background:#fff; border-radius:14px; padding:24px;
+                 box-shadow:0 8px 24px rgba(0,0,0,.08); }
+    h1, h2 { text-align:center; margin:0 0 16px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; }
+    input, select, button, textarea { padding:8px 10px; border:1px solid #ccc; border-radius:8px; }
+    button { cursor:pointer; }
+    .btn { background:#111; color:#fff; }
+    .btn-outline { background:#fff; border:1px solid #111; }
+    .tabs { display:flex; justify-content:center; gap:8px; margin:16px 0; }
+    .tab { background:#eee; border:none; padding:8px 14px; border-radius:999px; }
+    .tab.active { background:#111; color:#fff; }
+    .section { display:none; }
+    .section.active { display:block; }
+    .hr { height:1px; background:#e5e5e5; margin:16px 0; }
+    .card { border:1px solid #e7e7e7; border-radius:10px; padding:14px; margin:10px 0; background:#fff; }
+    .muted { color:#666; font-size:13px; }
+    .right { text-align:right; }
+    .center { text-align:center; }
+    dialog { border:none; border-radius:12px; padding:0; }
+    dialog::backdrop { background:rgba(0,0,0,.35); }
+    .modal { padding:18px; min-width:320px; }
+    .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid #ddd; }
+    .grid { display:grid; gap:10px; }
+    @media (min-width: 750px) {
+      .grid-2 { grid-template-columns: 1fr 1fr; }
+      .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>Hausrunde Test Frontend</h1>
+
+  <!-- AUTH -->
+  <section id="auth">
+    <h2>Login</h2>
+    <div class="row center">
+      <input id="email" type="email" placeholder="Email" style="min-width:240px">
+      <input id="password" type="password" placeholder="Password" style="min-width:200px">
+      <button id="loginBtn" class="btn">Login</button>
+      <button id="logoutBtn" class="btn-outline">Logout</button>
+    </div>
+    <div id="authStatus" class="center muted" style="margin-top:8px"></div>
+  </section>
+
+
+    <!-- REGISTER -->
+    <h2>Register</h2>
+    <form id="registerForm" class="row center" style="margin-bottom:16px">
+      <input type="email" name="email" placeholder="Email" required style="min-width:240px">
+      <input type="password" name="password" placeholder="Password" required style="min-width:200px">
+      <button type="submit" class="btn">Register</button>
+    </form>
+    <div id="registerMsg" class="center muted" style="margin-top:8px"></div>
+
+
+  <!-- TABS -->
+  <div class="tabs" id="tabs" style="display:none;">
+    <button class="tab active" data-tab="tab-ads">Ads</button>
+    <button class="tab" data-tab="tab-myads">My Ads</button>
+    <button class="tab" data-tab="tab-bookings">My Bookings</button>
+  </div>
+
+  <!-- ADS (public with filters + create) -->
+  <section id="tab-ads" class="section active">
+    <h2>Ads</h2>
+
+    <!-- Filters -->
+    <form id="adsFilter" class="grid grid-3">
+      <input name="q" placeholder="Search (q)">
+      <input name="location" placeholder="Location">
+      <input name="housing_type" placeholder="Housing type">
+
+      <input name="price_min" type="number" placeholder="Price min">
+      <input name="price_max" type="number" placeholder="Price max">
+      <select name="ordering">
+        <option value="">Ordering</option>
+        <option value="price">price ↑</option>
+        <option value="-price">price ↓</option>
+        <option value="created_at">created_at ↑</option>
+        <option value="-created_at">created_at ↓</option>
+      </select>
+
+      <input name="rooms_min" type="number" placeholder="Rooms min">
+      <input name="rooms_max" type="number" placeholder="Rooms max">
+      <select name="page_size">
+        <option value="10">10 / page</option>
+        <option value="20">20 / page</option>
+        <option value="30">30 / page</option>
+        <option value="50">50 / page</option>
+      </select>
+
+      <div class="row">
+        <button class="btn" type="submit">Search</button>
+        <button class="btn-outline" type="button" id="resetAds">Reset</button>
+      </div>
+    </form>
+
+    <div id="adsList"></div>
+    <div class="row" id="adsPager" style="justify-content:space-between; align-items:center;"></div>
+
+    <div class="hr"></div>
+
+    <!-- Create Ad -->
+    <h3 class="center">Create Ad</h3>
+    <form id="adCreate" class="grid grid-2">
+      <input name="title" placeholder="Title" required>
+      <input name="location" placeholder="Location">
+      <textarea name="description" placeholder="Description" rows="3" style="grid-column:1 / -1"></textarea>
+      <input name="price" type="number" placeholder="Price">
+      <input name="rooms" type="number" placeholder="Rooms">
+      <input name="housing_type" placeholder="Housing type">
+      <label class="muted"><input type="checkbox" name="is_active" checked> Active</label>
+      <button class="btn" type="submit">Create</button>
+    </form>
+    <div id="adCreateMsg" class="center muted"></div>
+  </section>
+
+  <!-- MY ADS (derived from logged email) -->
+  <section id="tab-myads" class="section">
+    <h2>My Ads</h2>
+    <div id="myAdsList" class="muted center">Login to see your ads.</div>
+  </section>
+
+  <!-- BOOKINGS (mine as tenant or owner) -->
+  <section id="tab-bookings" class="section">
+    <h2>My Bookings</h2>
+
+    <form id="bookingCreate" class="row">
+      <input name="ad" type="number" placeholder="Ad ID" required>
+      <input name="date_from" type="date" required>
+      <input name="date_to" type="date" required>
+      <button class="btn" type="submit">Create Booking</button>
+    </form>
+    <div id="bookingCreateMsg" class="center muted"></div>
+
+    <div id="bookingsList" class="muted center">Login to see your bookings.</div>
+  </section>
+</div>
+
+<!-- Booking modal -->
+<dialog id="bookModal">
+  <form id="bookForm" class="modal">
+    <h3>Book this ad</h3>
+    <input type="hidden" name="ad" id="bookAdId">
+    <div class="row">
+      <input type="date" name="date_from" required>
+      <input type="date" name="date_to" required>
+    </div>
+    <div class="row" style="justify-content:flex-end">
+      <button type="button" class="btn-outline" id="bookCancel">Cancel</button>
+      <button class="btn">Book</button>
+    </div>
+    <div id="bookMsg" class="muted" style="margin-top:8px"></div>
+  </form>
+</dialog>
+
+<script>
+  // ======== STATE ========
+  let access = null;                 // JWT access token
+  let currentEmail = null;           // email, чтобы фильтровать "My Ads"
+  let adsPage = 1;                   // пагинация
+  const API = "/api";
+
+  // ======== HELPERS ========
+  function hAuth() { return access ? { "Authorization": "Bearer " + access } : {}; }
+  function enc(obj) { return new URLSearchParams(obj).toString(); }
+  function esc(s){return String(s||'').replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+
+  function showTabs(show){ document.getElementById('tabs').style.display = show ? 'flex' : 'none'; }
+
+  function setAuthStatus(txt){ document.getElementById('authStatus').textContent = txt || ''; }
+
+  // tabs
+  document.querySelectorAll('.tab').forEach(b=>{
+    b.addEventListener('click', ()=>{
+      document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active'));
+      document.querySelectorAll('.section').forEach(x=>x.classList.remove('active'));
+      b.classList.add('active');
+      document.getElementById(b.dataset.tab).classList.add('active');
+    })
+  });
+
+  // ======== AUTH ========
+  document.getElementById('loginBtn').addEventListener('click', async ()=>{
+    const email = document.getElementById('email').value.trim();
+    const password = document.getElementById('password').value;
+    // ВАЖНО: SimpleJWT ждёт email+password (USERNAME_FIELD = 'email')
+    const res = await fetch(`${API}/token/`, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ email, password })
+    });
+    if(res.ok){
+      const data = await res.json();
+      access = data.access;
+      currentEmail = email;
+      setAuthStatus('✅ Logged in as ' + email);
+      showTabs(true);
+      loadAds(); loadMyAds(); loadBookings();
+    } else {
+      setAuthStatus('❌ Login failed');
+    }
+  });
+
+  document.getElementById('logoutBtn').addEventListener('click', ()=>{
+    access = null; currentEmail = null;
+    setAuthStatus('Logged out');
+    showTabs(false);
+  });
+
+    // ======== REGISTER ========
+  document.getElementById('registerForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+
+    const res = await fetch(`${API}/users/register/`, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const msg = document.getElementById('registerMsg');
+    if(res.ok){
+      msg.textContent = "✅ Registration successful! You can login now.";
+      e.target.reset();
+    } else {
+      const err = await res.json().catch(()=> ({}));
+      msg.textContent = "❌ Failed: " + (err.detail || JSON.stringify(err));
+    }
+  });
+
+
+
+
+  // ======== ADS LIST + FILTERS ========
+  const adsList = document.getElementById('adsList');
+  const adsPager = document.getElementById('adsPager');
+
+  async function loadAds(paramsStr){
+    const filterForm = document.getElementById('adsFilter');
+    const fd = new FormData(filterForm);
+    if(paramsStr){ /* пришло извне */ }
+    else { fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
+    const res = await fetch(`${API}/ads/?${paramsStr}`, { headers: hAuth() });
+    if(!res.ok){ adsList.innerHTML = `<div class="center muted">Error ${res.status}</div>`; return; }
+    const data = await res.json();
+    renderAds(data.results || []);
+    renderAdsPager(data.count || 0, Number(fd.get('page_size')||10));
+  }
+
+  function renderAds(items){
+    if(!items.length){ adsList.innerHTML = '<div class="center muted">No ads found.</div>'; return; }
+    adsList.innerHTML = items.map(ad => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between; align-items:flex-start">
+          <div>
+            <div><b>${esc(ad.title)}</b></div>
+            <div class="muted">${esc(ad.location)} · ${ad.rooms} rooms · ${esc(ad.housing_type||'')}</div>
+          </div>
+          <div class="right">
+            <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
+            <div class="muted">ID: ${ad.id}</div>
+          </div>
+        </div>
+        <div class="muted" style="margin-top:6px">${esc(ad.description||'')}</div>
+        <div class="row" style="justify-content:flex-end; margin-top:8px">
+          <button class="btn-outline" data-ad="${ad.id}" data-action="book">Book</button>
+        </div>
+      </div>
+    `).join('');
+
+    // attach Book handlers
+    adsList.querySelectorAll('button[data-action="book"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        if(!access){ alert('Please login first'); return; }
+        document.getElementById('bookAdId').value = btn.dataset.ad;
+        document.getElementById('bookMsg').textContent = '';
+        document.getElementById('bookModal').showModal();
+      })
+    })
+  }
+
+  function renderAdsPager(count, pageSize){
+    const total = Math.max(1, Math.ceil(count / pageSize));
+    adsPager.innerHTML = `
+      <div class="muted">Total: ${count}</div>
+      <div class="row">
+        <button class="btn-outline" id="prevAds" ${adsPage<=1?'disabled':''}>Prev</button>
+        <div class="muted" style="padding:8px 12px">Page ${adsPage} / ${total}</div>
+        <button class="btn-outline" id="nextAds" ${adsPage>=total?'disabled':''}>Next</button>
+      </div>
+    `;
+    const prev = document.getElementById('prevAds');
+    const next = document.getElementById('nextAds');
+    prev && prev.addEventListener('click', ()=>{ adsPage=Math.max(1, adsPage-1); loadAds(); });
+    next && next.addEventListener('click', ()=>{ adsPage=adsPage+1; loadAds(); });
+  }
+
+  document.getElementById('adsFilter').addEventListener('submit', (e)=>{
+    e.preventDefault(); adsPage=1; loadAds();
+  });
+  document.getElementById('resetAds').addEventListener('click', ()=>{
+    document.getElementById('adsFilter').reset(); adsPage=1; loadAds();
+  });
+
+  // ======== CREATE AD ========
+  document.getElementById('adCreate').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(!access){ alert('Login required'); return; }
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    payload.price = payload.price ? Number(payload.price) : null;
+    payload.rooms = payload.rooms ? Number(payload.rooms) : null;
+    payload.is_active = !!fd.get('is_active');
+    const res = await fetch(`${API}/ads/`, {
+      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const msg = document.getElementById('adCreateMsg');
+    if(res.ok){ msg.textContent='✅ Ad created'; e.target.reset(); loadAds(); loadMyAds(); }
+    else { msg.textContent='❌ Failed to create'; }
+  });
+
+  // ======== MY ADS (фильтруем по owner == currentEmail) ========
+  async function loadMyAds(){
+    const box = document.getElementById('myAdsList');
+    if(!access || !currentEmail){ box.textContent='Login to see your ads.'; return; }
+    const res = await fetch(`${API}/ads/?page_size=50`, { headers: hAuth() });
+    if(!res.ok){ box.textContent='Error loading'; return; }
+    const data = await res.json();
+    const mine = (data.results || []).filter(a => (a.owner || '').toLowerCase() === currentEmail.toLowerCase());
+    if(!mine.length){ box.textContent='No ads yet.'; return; }
+    box.innerHTML = mine.map(ad => `
+      <div class="card">
+        <div class="row" style="justify-content:space-between">
+          <div><b>${esc(ad.title)}</b><div class="muted">${esc(ad.location)}</div></div>
+          <div class="right">
+            <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
+            <div class="muted">ID: ${ad.id}</div>
+          </div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  // ======== BOOKINGS ========
+  async function loadBookings(){
+    const box = document.getElementById('bookingsList');
+    if(!access){ box.textContent='Login to see your bookings.'; return; }
+    const res = await fetch(`${API}/bookings/`, { headers:hAuth() });
+    if(!res.ok){ box.textContent='Error loading'; return; }
+    const list = await res.json(); // вью возвращает список (не пагинированный)
+    if(!list.length){ box.textContent='No bookings yet.'; return; }
+
+    // Чтобы понять, владелец ли я объявления — подтянем owner для каждого ad
+    const adOwnersCache = {};
+    async function getAdOwner(adId){
+      if(adOwnersCache[adId]) return adOwnersCache[adId];
+      const r = await fetch(`${API}/ads/${adId}/`);
+      if(!r.ok) return null;
+      const ad = await r.json();
+      adOwnersCache[adId] = ad.owner || null;
+      return adOwnersCache[adId];
+    }
+
+    // Рендер с кнопками в зависимости от роли
+    box.innerHTML = '';
+    for(const b of list){
+      const ownerEmail = await getAdOwner(b.ad);
+      const iAmOwner = currentEmail && ownerEmail && currentEmail.toLowerCase() === ownerEmail.toLowerCase();
+      const iAmTenant = currentEmail && b.tenant && currentEmail.toLowerCase() === b.tenant.toLowerCase();
+
+      const el = document.createElement('div');
+      el.className = 'card';
+      el.innerHTML = `
+        <div class="row" style="justify-content:space-between">
+          <div>
+            <div><b>Booking #${b.id}</b> · <span class="pill">${esc(b.status)}</span></div>
+            <div class="muted">Ad: ${b.ad} · ${esc(b.date_from)} → ${esc(b.date_to)}</div>
+            <div class="muted">Tenant: ${esc(b.tenant || '')} · Owner: ${esc(ownerEmail || '')}</div>
+          </div>
+          <div class="row">
+            ${iAmOwner && b.status==='PENDING' ? `
+              <button class="btn-outline" data-act="confirm" data-id="${b.id}">Confirm</button>
+              <button class="btn-outline" data-act="reject" data-id="${b.id}">Reject</button>` : ''
+            }
+            ${iAmTenant && b.status!=='CANCELLED' ? `
+              <button class="btn-outline" data-act="cancel" data-id="${b.id}">Cancel</button>` : ''
+            }
+          </div>
+        </div>
+      `;
+      box.appendChild(el);
+    }
+
+    // handlers
+    box.querySelectorAll('button[data-act]').forEach(btn=>{
+      btn.addEventListener('click', async ()=>{
+        const id = btn.dataset.id, act = btn.dataset.act;
+        const r = await fetch(`${API}/bookings/${id}/${act}/`, { method:'POST', headers:hAuth() });
+        if(!r.ok) alert(`Action failed (${act})`);
+        await loadBookings();
+      });
+    });
+  }
+
+  // создать бронь из формы в разделе Bookings
+  document.getElementById('bookingCreate').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(!access){ alert('Login required'); return; }
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    const res = await fetch(`${API}/bookings/`, {
+      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const msg = document.getElementById('bookingCreateMsg');
+    if(res.ok){ msg.textContent='✅ Booking created'; e.target.reset(); loadBookings(); }
+    else { msg.textContent='❌ Failed to create booking'; }
+  });
+
+  // ======== BOOK FROM AD CARD (modal) ========
+  const bookModal = document.getElementById('bookModal');
+  document.getElementById('bookCancel').addEventListener('click', ()=> bookModal.close());
+  document.getElementById('bookForm').addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(!access){ alert('Login required'); return; }
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    const res = await fetch(`${API}/bookings/`, {
+      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const msg = document.getElementById('bookMsg');
+    if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600); }
+    else { msg.textContent='❌ Failed to create booking'; }
+  });
+
+  // ======== INIT ========
+  // первая загрузка объявлений (публично)
+  loadAds();
+</script>
+</body>
+</html>
