@@ -16,6 +16,12 @@ from datetime import timedelta
 
 load_dotenv()
 
+
+def _bool(v: str | None, default=False):
+    if v is None:
+        return default
+    return v.lower() in {'1', 'true', 'yes', 'on'}
+
 SECRET_KEY = os.getenv("DJANGO_SECRET_KEY")
 
 if not SECRET_KEY:
@@ -23,6 +29,10 @@ if not SECRET_KEY:
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# --- DEBUG / HOSTS ---
+DEBUG = _bool(os.getenv("DEBUG"), True)
+ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()]
 
 
 # Quick-start development settings - unsuitable for production
@@ -141,6 +151,11 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
 STATIC_URL = 'static/'
+
+# user media uploads
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

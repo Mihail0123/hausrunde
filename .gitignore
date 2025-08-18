@@ -13,7 +13,6 @@ ENV/
 *.log
 db.sqlite3
 media/
-static/
 staticfiles/
 
 # IDE
@@ -27,3 +26,4 @@ Thumbs.db
 # dotenv
 .env
 .env.*
+!.env.example
