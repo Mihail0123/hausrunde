@@ -186,6 +186,12 @@ class AdViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
 
+    def get_serializer_class(self):
+        """Use dedicated serializer for upload_image action"""
+        if getattr(self, 'action', None) == 'upload_image':
+            return AdImageUploadSerializer
+        return super().get_serializer_class()
+
     @extend_schema(
         summary="Upload image(s) for an ad (owner only)",
         description=(
@@ -201,17 +207,27 @@ class AdViewSet(viewsets.ModelViewSet):
     def upload_image(self, request, pk=None):
         """Create one or many AdImage objects for the Ad."""
         ad = self.get_object()
-        # Enforce object-level permission (IsAdOwnerOrReadOnly)
+        # object-level permission (IsAdOwnerOrReadOnly)
         self.check_object_permissions(request, ad)
 
-        files = request.FILES.getlist("images") or request.FILES.getlist("image")
+        # validate form fields (caption, single image)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        caption = serializer.validated_data.get("caption", "")
+
+        # accept multiple files via `images` or a single one via validated `image`
+        files = request.FILES.getlist("images")
+        if not files:
+            single = serializer.validated_data.get("image")
+            if single is not None:
+                files = [single]
+
         if not files:
             return Response(
                 {"detail": 'No files provided. Use "image" or repeated "images".'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        caption = request.data.get("caption", "")
         created = [AdImage.objects.create(ad=ad, image=f, caption=caption) for f in files]
         return Response(AdImageSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
 
