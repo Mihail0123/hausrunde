@@ -4,10 +4,8 @@
   <meta charset="UTF-8" />
   <title>Hausrunde Test Frontend</title>
   <style>
-    body { font-family: Arial, sans-serif; background:#f5f5f5; margin:0; padding:24px;
-           display:flex; justify-content:center; }
-    .container { width: 100%; max-width: 980px; background:#fff; border-radius:14px; padding:24px;
-                 box-shadow:0 8px 24px rgba(0,0,0,.08); }
+    body { font-family: Arial, sans-serif; background:#f5f5f5; margin:0; padding:24px; display:flex; justify-content:center; }
+    .container { width: 100%; max-width: 980px; background:#fff; border-radius:14px; padding:24px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
     h1, h2 { text-align:center; margin:0 0 16px; }
     .row { display:flex; gap:10px; flex-wrap:wrap; }
     input, select, button, textarea { padding:8px 10px; border:1px solid #ccc; border-radius:8px; }
@@ -24,9 +22,11 @@
     .muted { color:#666; font-size:13px; }
     .right { text-align:right; }
     .center { text-align:center; }
+
     dialog { border:none; border-radius:12px; padding:0; }
     dialog::backdrop { background:rgba(0,0,0,.35); }
     .modal { padding:18px; min-width:320px; }
+
     .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid #ddd; }
     .chip { font-size:13px; padding:4px 10px; border:1px solid #ddd; border-radius:999px; background:#fafafa; cursor:pointer; }
     .grid { display:grid; gap:10px; }
@@ -35,6 +35,13 @@
       .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
     }
     .rating { font-size:13px; }
+
+    /* Thumbs */
+    .thumb-row { display:flex; gap:10px; overflow:auto; padding:8px 0; align-items:flex-start; }
+    .thumb { display:flex; flex-direction:column; align-items:center; gap:4px; min-width:120px; }
+    .thumb img { height:100px; border-radius:8px; border:1px solid #eee; display:block; }
+    .thumb a { font-size:11px; color:#333; text-decoration:underline; max-width:120px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .thumb small { color:#a33; }
   </style>
 </head>
 <body>
@@ -69,14 +76,12 @@
     <button class="tab" data-tab="tab-bookings">My Bookings</button>
   </div>
 
-  <!-- ADS (public with filters + create) -->
+  <!-- ADS -->
   <section id="tab-ads" class="section active">
     <h2>Ads</h2>
 
-    <!-- Top searches -->
     <div id="topSearches" class="row" style="margin:8px 0 14px; display:none;"></div>
 
-    <!-- Filters -->
     <form id="adsFilter" class="grid grid-3">
       <input name="q" placeholder="Search (q)">
       <input name="location" placeholder="Location">
@@ -138,7 +143,6 @@
   <!-- BOOKINGS -->
   <section id="tab-bookings" class="section">
     <h2>My Bookings</h2>
-
     <form id="bookingCreate" class="row">
       <input name="ad" type="number" placeholder="Ad ID" required>
       <input name="date_from" type="date" required>
@@ -146,7 +150,6 @@
       <button class="btn" type="submit">Create Booking</button>
     </form>
     <div id="bookingCreateMsg" class="center muted"></div>
-
     <div id="bookingsList" class="muted center">Login to see your bookings.</div>
   </section>
 </div>
@@ -199,7 +202,7 @@
       <button type="button" class="btn-outline" id="adClose">Close</button>
     </div>
     <div id="adMeta" class="muted" style="margin:6px 0 12px;"></div>
-    <div id="adGallery" class="row" style="gap:8px; overflow:auto;"></div>
+    <div id="adGallery" class="thumb-row"></div>
     <div id="adDesc" class="muted" style="margin:12px 0;"></div>
     <div class="row" style="justify-content:flex-end; gap:8px; margin-top:10px;">
       <button class="btn-outline" id="adReviewsBtn">Reviews</button>
@@ -210,7 +213,7 @@
 
 <script>
   // ======== STATE ========
-  var access = null;                 // JWT access token
+  var access = null;
   var currentEmail = null;
   var adsPage = 1;
   var API = "/api";
@@ -223,6 +226,39 @@
   function setAuthStatus(txt){ document.getElementById('authStatus').textContent = txt || ''; }
   function fmtAvg(x){ var n = Number(x); return isFinite(n) ? n.toFixed(1) : '—'; }
   function emailsEqual(a, b){ return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase(); }
+
+  // normalize image URL
+  function imgURLFrom(img){
+    if (!img) return '';
+    var u = (typeof img === 'string') ? img : (img.image_url || img.image || img.url || '');
+    if (!u) return '';
+    u = String(u);
+    if (u.indexOf('\\') !== -1) u = u.replace(/\\/g,'/'); // windows slashes
+    if (u.startsWith('http://') || u.startsWith('https://')) return u;
+    if (u.startsWith('/')) return u;
+    if (u.startsWith('media/')) return '/' + u;
+    return '/media/' + u;
+  }
+
+  // render image thumbnails + debug link
+  function renderThumbsHTML(images){
+    if(!Array.isArray(images) || !images.length) return '<div class="muted">No images.</div>';
+    var html = images.map(function(im){
+      var url = imgURLFrom(im);
+      var cap = (im && im.caption) ? String(im.caption) : '';
+      if(!url) return '';
+      // inline onerror: hide broken img, show marker
+      var err = "this.style.display='none'; var s=this.parentNode.querySelector('small'); if(s){s.textContent='(broken)';}";
+      return '' +
+        '<div class="thumb">' +
+          '<img src="'+ url +'" alt="'+ esc(cap) +'" onerror="'+ err +'">' +
+          '<a href="'+ url +'" target="_blank" rel="noopener">open image</a>' +
+          (cap ? '<div class="muted" style="font-size:11px; max-width:120px; text-align:center;">'+ esc(cap) +'</div>' : '') +
+          '<small></small>' +
+        '</div>';
+    }).filter(Boolean).join('');
+    return html || '<div class="muted">No images.</div>';
+  }
 
   // tabs
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
@@ -245,8 +281,7 @@
     });
     if(res.ok){
       var data = await res.json();
-      access = data.access;
-      currentEmail = email;
+      access = data.access; currentEmail = email;
       setAuthStatus('✅ Logged in as ' + email);
       showTabs(true);
       loadTopSearches();
@@ -258,8 +293,7 @@
 
   document.getElementById('logoutBtn').addEventListener('click', function(){
     access = null; currentEmail = null;
-    setAuthStatus('Logged out');
-    showTabs(false);
+    setAuthStatus('Logged out'); showTabs(false);
   });
 
   // REGISTER
@@ -267,22 +301,14 @@
     e.preventDefault();
     var fd = new FormData(e.target);
     var payload = Object.fromEntries(fd.entries());
-
     var res = await fetch(API + "/users/register/", {
       method:'POST',
       headers:{ 'Content-Type':'application/json' },
       body: JSON.stringify(payload)
     });
-
     var msg = document.getElementById('registerMsg');
-    if(res.ok){
-      msg.textContent = "✅ Registration successful! You can login now.";
-      e.target.reset();
-    } else {
-      var err = {};
-      try { err = await res.json(); } catch(e){}
-      msg.textContent = "❌ Failed: " + (err.detail || JSON.stringify(err));
-    }
+    if(res.ok){ msg.textContent = "✅ Registration successful! You can login now."; e.target.reset(); }
+    else { var err={}; try{err=await res.json();}catch{} msg.textContent = "❌ Failed: " + (err.detail || JSON.stringify(err)); }
   });
 
   // ======== TOP SEARCHES ========
@@ -290,7 +316,7 @@
     var box = document.getElementById('topSearches');
     var res = await fetch(API + "/search-history/top/?limit=10");
     if(!res.ok){ box.style.display='none'; return; }
-    var items = await res.json(); // [{q:'', count:n}]
+    var items = await res.json();
     if(!items.length){ box.style.display='none'; return; }
     box.style.display='flex';
     box.innerHTML = '<span class="muted">Top searches:</span>' +
@@ -300,8 +326,7 @@
         var q = ch.getAttribute('data-q') === '(empty)' ? '' : ch.getAttribute('data-q');
         var f = document.getElementById('adsFilter');
         f.q.value = q || '';
-        adsPage = 1;
-        loadAds();
+        adsPage = 1; loadAds();
       });
     });
   }
@@ -313,8 +338,7 @@
   async function loadAds(paramsStr){
     var filterForm = document.getElementById('adsFilter');
     var fd = new FormData(filterForm);
-    if(paramsStr){ /* external */ }
-    else { fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
+    if(!paramsStr){ fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
     var res = await fetch(API + "/ads/?" + paramsStr, { headers: hAuth() });
     if(!res.ok){ adsList.innerHTML = '<div class="center muted">Error ' + res.status + '</div>'; return; }
     var data = await res.json();
@@ -325,17 +349,14 @@
   function renderAds(items){
     if(!items.length){ adsList.innerHTML = '<div class="center muted">No ads found.</div>'; return; }
     adsList.innerHTML = items.map(function(ad){
-      var own = emailsEqual(currentEmail, ad.owner); // если owner не придёт — own=false
+      var own = emailsEqual(currentEmail, ad.owner);
       return '\
       <div class="card ad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
         <div class="row" style="justify-content:space-between; align-items:flex-start">\
           <div>\
             <div><b>'+ esc(ad.title) +'</b></div>\
             <div class="muted">'+ esc(ad.location) +' · '+ ad.rooms +' rooms · '+ esc(ad.housing_type||'') +'</div>\
-            <div class="rating">⭐ '+ fmtAvg(ad.average_rating) +'\
-              · 👁 '+ Number(ad.views_count || 0) +'\
-              · 💬 '+ Number(ad.reviews_count || 0) +'\
-            </div>\
+            <div class="rating">⭐ '+ fmtAvg(ad.average_rating) +' · 👁 '+ Number(ad.views_count||0) +' · 💬 '+ Number(ad.reviews_count||0) +'</div>\
           </div>\
           <div class="right">\
             <div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div>\
@@ -343,6 +364,7 @@
           </div>\
         </div>\
         <div class="muted" style="margin-top:6px">'+ esc(ad.description||'') +'</div>\
+        <div class="thumb-row">'+ renderThumbsHTML(ad.images) +'</div>\
         <div class="row" style="justify-content:flex-end; margin-top:8px">\
           <button class="btn-outline" data-ad="'+ ad.id +'" data-action="reviews" onclick="event.stopPropagation()">Reviews</button>\
           '+ (own ? '' : '<button class="btn-outline" data-ad="'+ ad.id +'" data-action="book" onclick="event.stopPropagation()">Book</button>') + '\
@@ -350,7 +372,6 @@
       </div>';
     }).join('');
 
-    // Card -> details
     Array.prototype.forEach.call(adsList.querySelectorAll('.ad-card'), function(card){
       card.addEventListener('click', function(){
         var id = Number(card.getAttribute('data-ad'));
@@ -358,7 +379,6 @@
       });
     });
 
-    // Book handlers
     Array.prototype.forEach.call(adsList.querySelectorAll('button[data-action="book"]'), function(btn){
       btn.addEventListener('click', function(){
         if(!access){ alert('Please login first'); return; }
@@ -368,7 +388,6 @@
       });
     });
 
-    // Reviews handlers
     Array.prototype.forEach.call(adsList.querySelectorAll('button[data-action="reviews"]'), function(btn){
       btn.addEventListener('click', function(){
         openReviewsModal(Number(btn.getAttribute('data-ad')));
@@ -427,23 +446,85 @@
     if(!mine.length){ box.textContent='No ads yet.'; return; }
 
     box.innerHTML = mine.map(function(ad){
+      var upId = 'up-' + ad.id;
+      var capId = 'cap-' + ad.id;
+      var thumbsId = 'thumbs-' + ad.id;
       return '\
-      <div class="card myad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
-        <div class="row" style="justify-content:space-between">\
-          <div><b>'+ esc(ad.title) +'</b><div class="muted">'+ esc(ad.location) +'</div></div>\
-          <div class="right">\
-            <div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div>\
-            <div class="muted">ID: '+ ad.id +'</div>\
+      <div class="card" data-ad="'+ ad.id +'">\
+        <div class="muted">ID: '+ ad.id +'</div>\
+        <div class="grid grid-2">\
+          <div><label class="muted">Title</label><input name="title" value="'+ esc(ad.title||'') +'"></div>\
+          <div><label class="muted">Location</label><input name="location" value="'+ esc(ad.location||'') +'"></div>\
+          <div style="grid-column:1 / -1"><label class="muted">Description</label><textarea name="description" rows="3">'+ esc(ad.description||'') +'</textarea></div>\
+          <div><label class="muted">Price</label><input name="price" type="number" value="'+ (ad.price||'') +'"></div>\
+          <div><label class="muted">Rooms</label><input name="rooms" type="number" value="'+ (ad.rooms||'') +'"></div>\
+          <div><label class="muted">Type</label><input name="housing_type" value="'+ esc(ad.housing_type||'') +'"></div>\
+          <div style="display:flex; align-items:end; gap:8px;">\
+            <label class="muted"><input type="checkbox" name="is_active" '+ (ad.is_active?'checked':'') +'> Active</label>\
+            <button class="btn" data-act="save" data-id="'+ ad.id +'">Save</button>\
+            <button class="btn-outline" data-act="delete" data-id="'+ ad.id +'">Delete</button>\
           </div>\
+        </div>\
+        <div class="hr"></div>\
+        <div class="muted" style="margin-bottom:6px;">Images</div>\
+        <div id="'+ thumbsId +'" class="thumb-row">'+ renderThumbsHTML(ad.images) +'</div>\
+        <div class="row">\
+          <input type="file" id="'+ upId +'" multiple>\
+          <input id="'+ capId +'" placeholder="Optional caption" style="min-width:240px;">\
+          <button class="btn" data-act="upload" data-id="'+ ad.id +'">Upload</button>\
         </div>\
       </div>';
     }).join('');
 
-    // клик по моей карточке -> модалка объявления
-    Array.prototype.forEach.call(box.querySelectorAll('.myad-card'), function(card){
-      card.addEventListener('click', function(){
-        var id = Number(card.getAttribute('data-ad'));
-        openAdModal(id);
+    // save
+    box.querySelectorAll('button[data-act="save"]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var card = btn.closest('.card'); var id = Number(btn.dataset.id);
+        var payload = {
+          title: card.querySelector('input[name="title"]').value,
+          location: card.querySelector('input[name="location"]').value,
+          description: card.querySelector('textarea[name="description"]').value,
+          price: Number(card.querySelector('input[name="price"]').value || 0),
+          rooms: Number(card.querySelector('input[name="rooms"]').value || 0),
+          housing_type: card.querySelector('input[name="housing_type"]').value,
+          is_active: card.querySelector('input[name="is_active"]').checked
+        };
+        var r = await fetch(API + "/ads/" + id + "/", {
+          method:'PATCH', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}), body: JSON.stringify(payload)
+        });
+        if(!r.ok){ alert('Save failed'); return; }
+        const ad = await r.json();
+        card.querySelector('#thumbs-' + id).innerHTML = renderThumbsHTML(ad.images || []);
+        alert('Saved');
+      });
+    });
+
+    // delete
+    box.querySelectorAll('button[data-act="delete"]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var id = Number(btn.dataset.id);
+        if(!confirm('Delete this ad?')) return;
+        var r = await fetch(API + "/ads/" + id + "/", { method:'DELETE', headers:hAuth() });
+        if(!r.ok){ alert('Delete failed'); return; }
+        await loadMyAds(); await loadAds();
+      });
+    });
+
+    // upload
+    box.querySelectorAll('button[data-act="upload"]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var id = Number(btn.dataset.id);
+        var up = document.getElementById('up-' + id);
+        var cap = document.getElementById('cap-' + id).value || '';
+        if(!up.files.length){ alert('Choose file(s)'); return; }
+        var fd = new FormData();
+        for (var i=0; i<up.files.length; i++) fd.append('images', up.files[i]);
+        if (cap) fd.append('caption', cap);
+        var r = await fetch(API + "/ads/" + id + "/images/", { method:'POST', headers:hAuth(), body: fd });
+        if(!r.ok){ let err={}; try{err=await r.json();}catch{} alert('Upload failed: '+(err.detail||r.status)); return; }
+        const fresh = await (await fetch(API + "/ads/" + id + "/")).json();
+        document.getElementById('thumbs-' + id).innerHTML = renderThumbsHTML(fresh.images || []);
+        up.value = '';
       });
     });
   }
@@ -480,9 +561,9 @@
       el.innerHTML = '\
         <div class="row" style="justify-content:space-between">\
           <div>\
-            <div><b>Booking #'+ b.id +'</b> · <span class="pill">'+ esc(b.status) +'</span></div>\
-            <div class="muted">Ad: '+ b.ad +' · '+ esc(b.date_from) +' → '+ esc(b.date_to) +'</div>\
-            <div class="muted">Tenant: '+ esc(b.tenant || '') +' · Owner: '+ esc(ownerEmail || '') +'</div>\
+            <div><b>Booking #'+ b.id +'</b> · <span class="pill">'+ (b.status||'') +'</span></div>\
+            <div class="muted">Ad: '+ b.ad +' · '+ (b.date_from||'') +' → '+ (b.date_to||'') +'</div>\
+            <div class="muted">Tenant: '+ (b.tenant||'') +' · Owner: '+ (ownerEmail||'') +'</div>\
           </div>\
           <div class="row">\
             '+ (iAmOwner && b.status==='PENDING' ? '\
@@ -495,58 +576,35 @@
       box.appendChild(el);
     }
 
-    // handlers
-    Array.prototype.forEach.call(box.querySelectorAll('button[data-act]'), function(btn){
-  btn.addEventListener('click', async function(){
-    var id  = btn.getAttribute('data-id');
-    var act = btn.getAttribute('data-act');
+    box.querySelectorAll('button[data-act]').forEach(function(btn){
+      btn.addEventListener('click', async function(){
+        var id  = btn.dataset.id;
+        var act = btn.dataset.act;
 
-    if (act === 'cancel') {
-      try {
-        // 1) get quote
-        var q = await fetch(API + "/bookings/" + id + "/cancel-quote/", { headers: hAuth() });
-        if (!q.ok) { alert('Failed to get cancellation quote'); return; }
-        var quote = await q.json();
-
-        // 2) build message
-        var pct   = (typeof quote.fee_percent === 'number') ? quote.fee_percent.toFixed(0) : '0';
-        var amt   = (typeof quote.fee_amount  === 'number') ? quote.fee_amount.toFixed(2)  : '0.00';
-        var total = (typeof quote.total_cost  === 'number') ? quote.total_cost.toFixed(2)  : '0.00';
-
-        var msg = (quote.message || '')
-          + "\n\nTotal cost: €" + total
-          + "\nCancellation fee: €" + amt + " (" + pct + "%)."
-          + "\n\nConfirm cancellation?";
-
-        // 3) confirm
-        if (!confirm(msg)) return;
-
-        // 4) cancel
-        var r = await fetch(API + "/bookings/" + id + "/cancel/", { method: 'POST', headers: hAuth() });
-        if (!r.ok) {
-          var err = {};
-          try { err = await r.json(); } catch(e){}
-          alert('Cancel failed: ' + (err.detail || r.status));
-          return;
+        if (act === 'cancel') {
+          try {
+            var q = await fetch(API + "/bookings/" + id + "/cancel-quote/", { headers: hAuth() });
+            if (!q.ok) { alert('Failed to get cancellation quote'); return; }
+            var quote = await q.json();
+            var pct   = (typeof quote.fee_percent === 'number') ? quote.fee_percent.toFixed(0) : '0';
+            var amt   = (typeof quote.fee_amount  === 'number') ? quote.fee_amount.toFixed(2)  : '0.00';
+            var total = (typeof quote.total_cost  === 'number') ? quote.total_cost.toFixed(2)  : '0.00';
+            var msg = (quote.message || '') + "\n\nTotal cost: €" + total + "\nCancellation fee: €" + amt + " (" + pct + "%).\n\nConfirm cancellation?";
+            if (!confirm(msg)) return;
+            var r = await fetch(API + "/bookings/" + id + "/cancel/", { method: 'POST', headers: hAuth() });
+            if (!r.ok) { var err={}; try{err=await r.json();}catch{} alert('Cancel failed: ' + (err.detail || r.status)); return; }
+            alert('Booking cancelled.'); await loadBookings(); return;
+          } catch (e) { alert('Cancel failed.'); return; }
         }
-        alert('Booking cancelled.');
-        await loadBookings();
-        return;
-      } catch (e) {
-        alert('Cancel failed.');
-        return;
-      }
-    }
 
-    // default for confirm/reject
-    var r2 = await fetch(API + "/bookings/" + id + "/" + act + "/", { method: 'POST', headers: hAuth() });
-    if (!r2.ok) alert('Action failed (' + act + ')');
-    await loadBookings();
-  });
-});
+        var r2 = await fetch(API + "/bookings/" + id + "/" + act + "/", { method: 'POST', headers: hAuth() });
+        if (!r2.ok) alert('Action failed (' + act + ')');
+        await loadBookings();
+      });
+    });
   }
 
-  // Create booking (form)
+  // Create booking
   const bookModal = document.getElementById('bookModal');
   document.getElementById('bookCancel').addEventListener('click', function(){ bookModal.close(); });
   document.getElementById('bookForm').addEventListener('submit', async function(e){
@@ -555,8 +613,7 @@
     var fd = new FormData(e.target);
     var payload = Object.fromEntries(fd.entries());
     var res = await fetch(API + "/bookings/", {
-      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}),
-      body: JSON.stringify(payload)
+      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}), body: JSON.stringify(payload)
     });
     var msg = document.getElementById('bookMsg');
     if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(function(){ bookModal.close(); loadBookings(); }, 600); }
@@ -577,21 +634,18 @@
     reviewsList.innerHTML = 'Loading…';
     reviewsModal.showModal();
 
-    // Показывать форму только если залогинен и это НЕ моё объявление
     let showForm = !!access;
     if (showForm) {
       try {
         const r = await fetch(`${API}/ads/${adId}/`);
         if (r.ok) {
           const ad = await r.json();
-          const isOwner = currentEmail && ad.owner &&
-            currentEmail.toLowerCase() === String(ad.owner).toLowerCase();
+          const isOwner = currentEmail && ad.owner && currentEmail.toLowerCase() === String(ad.owner).toLowerCase();
           showForm = !isOwner;
         }
       } catch(_) {}
     }
     reviewForm.style.display = showForm ? 'grid' : 'none';
-
     await loadReviews(adId);
   }
 
@@ -614,33 +668,22 @@
     `;
   }
 
-  // ВАЖНО: предотвращаем перезагрузку страницы при отправке формы
   reviewForm.addEventListener('submit', async (e)=>{
     e.preventDefault();
     if(!access){ alert('Login required'); return; }
     const fd = new FormData(reviewForm);
     const payload = Object.fromEntries(fd.entries());
     payload.rating = Number(payload.rating);
-
     const res = await fetch(`${API}/reviews/`, {
-      method:'POST',
-      headers:{ ...hAuth(), 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
+      method:'POST', headers:{ ...hAuth(), 'Content-Type':'application/json' }, body: JSON.stringify(payload)
     });
-
     if(res.ok){
-      reviewMsg.textContent = '✅ Review added';
-      reviewForm.reset();
+      reviewMsg.textContent = '✅ Review added'; reviewForm.reset();
       await loadReviews(document.getElementById('reviewAdId').value);
     } else {
-      let err = {};
-      try { err = await res.json(); } catch {}
+      let err = {}; try { err = await res.json(); } catch {}
       reviewMsg.textContent = '❌ ' + (err.detail || (err.non_field_errors && err.non_field_errors[0]) || JSON.stringify(err));
-      if (res.status === 401) {
-        // токен истёк — просим перелогиниться
-        access = null; currentEmail = null; showTabs(false);
-        setAuthStatus('Session expired — please login again.');
-      }
+      if (res.status === 401) { access = null; currentEmail = null; showTabs(false); setAuthStatus('Session expired — please login again.'); }
     }
   });
 
@@ -657,7 +700,6 @@
   adClose.addEventListener('click', function(){ adModal.close(); });
 
   async function openAdModal(adId){
-    // GET /api/ads/{id}/ — backend создаст AdView с дедупом 6h
     var res = await fetch(API + "/ads/" + adId + "/");
     if(!res.ok){ alert('Failed to load ad'); return; }
     var ad = await res.json();
@@ -674,18 +716,9 @@
       + ' · <span>💬 ' + Number(ad.reviews_count || 0) + '</span>';
 
     adDesc.textContent = ad.description || '';
-
-    if(Array.isArray(ad.images) && ad.images.length){
-      adGallery.innerHTML = ad.images.map(function(img){
-        return '<img src="' + img.image + '" alt="' + esc(img.caption||'') + '" style="height:120px; border-radius:8px; border:1px solid #eee;">';
-      }).join('');
-    } else {
-      adGallery.innerHTML = '<div class="muted">No images.</div>';
-    }
+    adGallery.innerHTML = renderThumbsHTML(ad.images || []);
 
     var isOwner = emailsEqual(currentEmail, ad.owner);
-
-    // "Book": скрыть, если это моё объявление
     adBookBtn.style.display = isOwner ? 'none' : 'inline-block';
     adBookBtn.onclick = function(e){
       e.preventDefault();
@@ -694,12 +727,7 @@
       document.getElementById('bookMsg').textContent = '';
       bookModal.showModal();
     };
-
-    // "Reviews": список всегда; форма только если не владелец
-    adReviewsBtn.onclick = function(e){
-      e.preventDefault();
-      openReviewsModal(adId, { isOwner: isOwner });
-    };
+    adReviewsBtn.onclick = function(e){ e.preventDefault(); openReviewsModal(adId); };
 
     adModal.showModal();
   }

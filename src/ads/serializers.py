@@ -3,15 +3,29 @@ from .models import Ad, Booking, AdImage, Review
 
 
 class AdImageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = AdImage
-        fields = ["id", "image", "caption", "created_at"]
-        read_only_fields = ["id", "created_at"]
+    # Удобное абсолютное URL для фронта
+    image_url = serializers.SerializerMethodField()
 
-class AdImageUploadSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdImage
-        fields = ["image", "caption"]
+        fields = ["id", "image", "image_url", "caption", "created_at"]
+        read_only_fields = ["id", "image_url", "created_at"]
+
+    def get_image_url(self, obj):
+        url = obj.image.url if obj.image else ""
+        req = self.context.get("request")
+        return req.build_absolute_uri(url) if req else url
+
+
+
+class AdImageUploadSerializer(serializers.Serializer):
+    """
+    Not ModelSerializer, to receive:
+      - single file to `image`
+      - multiple files to `images` (request.FILES.getlist)
+    """
+    image = serializers.ImageField(required=False, allow_null=True)
+    caption = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -60,10 +74,9 @@ class BookingSerializer(serializers.ModelSerializer):
         fields = ("id", "ad", "tenant", "date_from", "date_to", "status", "created_at")
         read_only_fields = ("id", "tenant", "status", "created_at")
 
+
 class AvailabilityItemSerializer(serializers.Serializer):
     """Public shape for busy date ranges."""
     date_from = serializers.DateField()
     date_to = serializers.DateField()
     status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
-
-
