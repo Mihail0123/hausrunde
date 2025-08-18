@@ -333,24 +333,26 @@
 
   // ======== MY ADS (фильтруем по owner == currentEmail) ========
   async function loadMyAds(){
-    const box = document.getElementById('myAdsList');
-    if(!access || !currentEmail){ box.textContent='Login to see your ads.'; return; }
-    const res = await fetch(`${API}/ads/?page_size=50`, { headers: hAuth() });
-    if(!res.ok){ box.textContent='Error loading'; return; }
-    const data = await res.json();
-    const mine = (data.results || []).filter(a => (a.owner || '').toLowerCase() === currentEmail.toLowerCase());
-    if(!mine.length){ box.textContent='No ads yet.'; return; }
-    box.innerHTML = mine.map(ad => `
-      <div class="card">
-        <div class="row" style="justify-content:space-between">
-          <div><b>${esc(ad.title)}</b><div class="muted">${esc(ad.location)}</div></div>
-          <div class="right">
-            <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
-            <div class="muted">ID: ${ad.id}</div>
-          </div>
+  const box = document.getElementById('myAdsList');
+  if(!access){ box.textContent='Login to see your ads.'; return; }
+
+  const res = await fetch(`${API}/ads/?page_size=50&mine=1`, { headers: hAuth() });
+  if(!res.ok){ box.textContent='Error loading'; return; }
+  const data = await res.json();
+  const mine = data.results || [];
+
+  if(!mine.length){ box.textContent='No ads yet.'; return; }
+  box.innerHTML = mine.map(ad => `
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div><b>${esc(ad.title)}</b><div class="muted">${esc(ad.location)}</div></div>
+        <div class="right">
+          <div style="font-weight:700">€${Number(ad.price).toLocaleString()}</div>
+          <div class="muted">ID: ${ad.id}</div>
         </div>
       </div>
-    `).join('');
+    </div>
+  `).join('');
   }
 
   // ======== BOOKINGS ========
@@ -424,9 +426,12 @@
       method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
+    const body = await res.json().catch(()=> ({}))
     const msg = document.getElementById('bookingCreateMsg');
     if(res.ok){ msg.textContent='✅ Booking created'; e.target.reset(); loadBookings(); }
-    else { msg.textContent='❌ Failed to create booking'; }
+    else {
+        msg.textContent = '❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking');
+}
   });
 
   // ======== BOOK FROM AD CARD (modal) ========
@@ -438,12 +443,17 @@
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
     const res = await fetch(`${API}/bookings/`, {
-      method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
-      body: JSON.stringify(payload)
-    });
+  method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
+  body: JSON.stringify(payload)
+});
     const msg = document.getElementById('bookMsg');
-    if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600); }
-    else { msg.textContent='❌ Failed to create booking'; }
+    const body = await res.json().catch(()=> ({}));
+    if(res.ok){
+    msg.textContent='✅ Booking created';
+    setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600);
+}   else {
+    msg.textContent = '❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking');
+}
   });
 
   // ======== INIT ========

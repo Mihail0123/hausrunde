@@ -2,6 +2,7 @@ from django.db.models import Q, Avg
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
+from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import (extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample,
@@ -27,6 +28,7 @@ class AdFilter(df.FilterSet):
     area_max = df.NumberFilter(field_name='area', lookup_expr='lte', label='Area max (m²)')
 
     q = df.CharFilter(method='filter_q', label='Search')
+    mine = df.BooleanFilter(method='filter_mine', label='Only my ads')
 
     def filter_q(self, queryset, name, value):
         terms = [t.strip() for t in (value or "").split() if t.strip()]
@@ -39,10 +41,17 @@ class AdFilter(df.FilterSet):
             )
         return queryset
 
+    def filter_mine(self, queryset, name, value):
+        """Return only ads owned by the current authenticated user."""
+        req = getattr(self, 'request', None)
+        if value and req and req.user.is_authenticated:
+            return queryset.filter(owner=req.user)
+        return queryset
+
     class Meta:
         model = Ad
         fields = ['q', 'price_min', 'price_max', 'rooms_min', 'rooms_max', 'location', 'housing_type', 'area_min',
-                  'area_max']
+                  'area_max', 'mine']
 
 
 # -------------------------
@@ -119,6 +128,12 @@ class AdFilter(df.FilterSet):
                 type=OpenApiTypes.INT,
                 description="Items per page (<=50)",
                 examples=[OpenApiExample("20 per page", value=20)]
+            ),
+            OpenApiParameter(
+                name="mine",
+                type=OpenApiTypes.BOOL,
+                description="If true, return only ads owned by the current user",
+                examples=[OpenApiExample("Only my ads", value=True)],
             ),
         ],
         examples=[
@@ -287,7 +302,17 @@ class BookingViewSet(viewsets.ModelViewSet):
             Q(tenant=user) | Q(ad__owner=user)
         ).select_related('ad', 'tenant')
 
+    def get_serializer_context(self):
+        """Be explicit: ensure request is in serializer context."""
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
+
     def perform_create(self, serializer):
+        """Forbid booking own ad and set tenant."""
+        ad = serializer.validated_data.get('ad')
+        if ad and ad.owner_id == self.request.user.id:
+            raise ValidationError({"detail": "You cannot book your own ad."})
         serializer.save(tenant=self.request.user)
 
     @extend_schema(
