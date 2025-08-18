@@ -28,11 +28,13 @@
     dialog::backdrop { background:rgba(0,0,0,.35); }
     .modal { padding:18px; min-width:320px; }
     .pill { font-size:12px; padding:2px 8px; border-radius:999px; border:1px solid #ddd; }
+    .chip { font-size:13px; padding:4px 10px; border:1px solid #ddd; border-radius:999px; background:#fafafa; cursor:pointer; }
     .grid { display:grid; gap:10px; }
     @media (min-width: 750px) {
       .grid-2 { grid-template-columns: 1fr 1fr; }
       .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
     }
+    .rating { font-size:13px; }
   </style>
 </head>
 <body>
@@ -71,6 +73,9 @@
   <section id="tab-ads" class="section active">
     <h2>Ads</h2>
 
+    <!-- Top searches -->
+    <div id="topSearches" class="row" style="margin:8px 0 14px; display:none;"></div>
+
     <!-- Filters -->
     <form id="adsFilter" class="grid grid-3">
       <input name="q" placeholder="Search (q)">
@@ -85,6 +90,8 @@
         <option value="-price">price ↓</option>
         <option value="created_at">created_at ↑</option>
         <option value="-created_at">created_at ↓</option>
+        <option value="-views_count">most viewed</option>
+        <option value="-reviews_count">most reviewed</option>
       </select>
 
       <input name="rooms_min" type="number" placeholder="Rooms min">
@@ -161,11 +168,34 @@
   </form>
 </dialog>
 
+<!-- Reviews modal -->
+<dialog id="reviewsModal">
+  <div class="modal" style="min-width:520px">
+    <h3>Reviews for Ad <span id="revAdId"></span></h3>
+    <div id="reviewsList" class="muted">Loading…</div>
+    <div class="hr"></div>
+    <form id="reviewForm" class="grid grid-2" style="margin-top:6px; display:none;">
+      <input type="hidden" name="ad" id="reviewAdId">
+      <select name="rating" required>
+        <option value="">Rating 1–5</option>
+        <option>1</option><option>2</option><option>3</option><option>4</option><option>5</option>
+      </select>
+      <span class="muted" style="align-self:center;">Only after finished confirmed booking</span>
+      <textarea name="text" rows="3" placeholder="Your comment (optional)" style="grid-column:1 / -1"></textarea>
+      <div class="row" style="justify-content:flex-end; grid-column:1 / -1">
+        <button type="button" class="btn-outline" id="reviewsClose">Close</button>
+        <button class="btn">Send review</button>
+      </div>
+      <div id="reviewMsg" class="muted" style="grid-column:1 / -1"></div>
+    </form>
+  </div>
+</dialog>
+
 <script>
   // ======== STATE ========
   let access = null;                 // JWT access token
-  let currentEmail = null;           // email for old-style client filtering (kept for reference)
-  let adsPage = 1;                   // pagination
+  let currentEmail = null;
+  let adsPage = 1;
   const API = "/api";
 
   // ======== HELPERS ========
@@ -189,7 +219,6 @@
   document.getElementById('loginBtn').addEventListener('click', async ()=>{
     const email = document.getElementById('email').value.trim();
     const password = document.getElementById('password').value;
-    // SimpleJWT expects email+password (USERNAME_FIELD = 'email')
     const res = await fetch(`${API}/token/`, {
       method:'POST',
       headers:{'Content-Type':'application/json'},
@@ -201,6 +230,7 @@
       currentEmail = email;
       setAuthStatus('✅ Logged in as ' + email);
       showTabs(true);
+      loadTopSearches();
       loadAds(); loadMyAds(); loadBookings();
     } else {
       setAuthStatus('❌ Login failed');
@@ -213,7 +243,7 @@
     showTabs(false);
   });
 
-  // ======== REGISTER ========
+  // REGISTER
   document.getElementById('registerForm').addEventListener('submit', async (e)=>{
     e.preventDefault();
     const fd = new FormData(e.target);
@@ -235,32 +265,25 @@
     }
   });
 
-  // ======== AVAILABILITY (state + helpers) ========
-  const availCache = {}; // { adId: [ {date_from, date_to, status}, ... ] }
-
-  async function fetchAvailability(adId){
-    if(!adId) return [];
-    const res = await fetch(`/api/ads/${adId}/availability/`); // public endpoint
-    if(!res.ok) return [];
-    const data = await res.json();
-    availCache[adId] = data || [];
-    return availCache[adId];
-  }
-
-  function overlapsBusy(adId, fromStr, toStr){
-    if(!adId || !fromStr || !toStr) return false;
-    const from = new Date(fromStr);
-    const to   = new Date(toStr);
-    if(isNaN(from) || isNaN(to)) return false;
-
-    const busy = availCache[adId] || [];
-    for(const b of busy){
-      const bf = new Date(b.date_from);
-      const bt = new Date(b.date_to);
-      // inclusive overlap check
-      if(!(to < bf || from > bt)){ return true; }
-    }
-    return false;
+  // ======== TOP SEARCHES ========
+  async function loadTopSearches(){
+    const box = document.getElementById('topSearches');
+    const res = await fetch(`${API}/search-history/top/?limit=10`);
+    if(!res.ok){ box.style.display='none'; return; }
+    const items = await res.json(); // [{q:'', count:n}]
+    if(!items.length){ box.style.display='none'; return; }
+    box.style.display='flex';
+    box.innerHTML = `<span class="muted">Top searches:</span>` +
+      items.map(i => `<span class="chip" data-q="${esc(i.q)}">${esc(i.q||'(empty)')} · ${i.count}</span>`).join('');
+    box.querySelectorAll('.chip').forEach(ch=>{
+      ch.addEventListener('click', ()=>{
+        const q = ch.dataset.q === '(empty)' ? '' : ch.dataset.q;
+        const f = document.getElementById('adsFilter');
+        f.q.value = q || '';
+        adsPage = 1;
+        loadAds();
+      });
+    });
   }
 
   // ======== ADS LIST + FILTERS ========
@@ -295,35 +318,28 @@
         </div>
         <div class="muted" style="margin-top:6px">${esc(ad.description||'')}</div>
         <div class="row" style="justify-content:flex-end; margin-top:8px">
+          <button class="btn-outline" data-ad="${ad.id}" data-action="reviews">Reviews</button>
           <button class="btn-outline" data-ad="${ad.id}" data-action="book">Book</button>
         </div>
       </div>
     `).join('');
 
-    // attach Book handlers
+    // Book handlers
     adsList.querySelectorAll('button[data-action="book"]').forEach(btn=>{
-      btn.addEventListener('click', async ()=>{
+      btn.addEventListener('click', ()=>{
         if(!access){ alert('Please login first'); return; }
-        const adId = btn.dataset.ad;
-        document.getElementById('bookAdId').value = adId;
-        const msg = document.getElementById('bookMsg');
-        msg.textContent = '';
-
-        // load availability and live-validate dates
-        await fetchAvailability(adId);
-        const [df, dt] = document.querySelectorAll('#bookForm input[type="date"]');
-        const submitBtn = document.querySelector('#bookForm button.btn');
-        const validate = ()=>{
-          const bad = overlapsBusy(adId, df.value, dt.value);
-          submitBtn.disabled = bad;
-          msg.textContent = bad ? '❌ These dates overlap with a busy interval.' : '';
-        };
-        df.onchange = dt.onchange = validate;
-        validate();
-
+        document.getElementById('bookAdId').value = btn.dataset.ad;
+        document.getElementById('bookMsg').textContent = '';
         document.getElementById('bookModal').showModal();
       })
-    })
+    });
+
+    // Reviews handlers
+    adsList.querySelectorAll('button[data-action="reviews"]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        openReviewsModal(Number(btn.dataset.ad));
+      });
+    });
   }
 
   function renderAdsPager(count, pageSize){
@@ -367,11 +383,11 @@
     else { msg.textContent='❌ Failed to create'; }
   });
 
-  // ======== MY ADS (server-side filter) ========
+  // ======== MY ADS ========
   async function loadMyAds(){
     const box = document.getElementById('myAdsList');
-    if(!access){ box.textContent='Login to see your ads.'; return; }
-    const res = await fetch(`${API}/ads/?page_size=50&mine=1`, { headers: hAuth() });
+    if(!access || !currentEmail){ box.textContent='Login to see your ads.'; return; }
+    const res = await fetch(`${API}/ads/?mine=true&page_size=50`, { headers: hAuth() });
     if(!res.ok){ box.textContent='Error loading'; return; }
     const data = await res.json();
     const mine = data.results || [];
@@ -395,10 +411,10 @@
     if(!access){ box.textContent='Login to see your bookings.'; return; }
     const res = await fetch(`${API}/bookings/`, { headers:hAuth() });
     if(!res.ok){ box.textContent='Error loading'; return; }
-    const list = await res.json(); // not paginated by design
+    const list = await res.json();
     if(!list.length){ box.textContent='No bookings yet.'; return; }
 
-    // cache owners for display
+    // Load owner emails cache for each ad
     const adOwnersCache = {};
     async function getAdOwner(adId){
       if(adOwnersCache[adId]) return adOwnersCache[adId];
@@ -449,31 +465,22 @@
     });
   }
 
-  // create booking form (My Bookings)
+  // Create booking (form)
   document.getElementById('bookingCreate').addEventListener('submit', async (e)=>{
     e.preventDefault();
     if(!access){ alert('Login required'); return; }
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
-
-    // availability guard
-    await fetchAvailability(payload.ad);
-    if(overlapsBusy(payload.ad, payload.date_from, payload.date_to)){
-      document.getElementById('bookingCreateMsg').textContent = '❌ These dates overlap with a busy interval.';
-      return;
-    }
-
     const res = await fetch(`${API}/bookings/`, {
       method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
-    const body = await res.json().catch(()=> ({}));
     const msg = document.getElementById('bookingCreateMsg');
     if(res.ok){ msg.textContent='✅ Booking created'; e.target.reset(); loadBookings(); }
-    else { msg.textContent='❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking'); }
+    else { msg.textContent='❌ Failed to create booking'; }
   });
 
-  // ======== BOOK FROM AD CARD (modal) ========
+  // Book from ad card (modal)
   const bookModal = document.getElementById('bookModal');
   document.getElementById('bookCancel').addEventListener('click', ()=> bookModal.close());
   document.getElementById('bookForm').addEventListener('submit', async (e)=>{
@@ -481,29 +488,76 @@
     if(!access){ alert('Login required'); return; }
     const fd = new FormData(e.target);
     const payload = Object.fromEntries(fd.entries());
-
-    // availability guard
-    if(overlapsBusy(payload.ad, payload.date_from, payload.date_to)){
-      document.getElementById('bookMsg').textContent = '❌ These dates overlap with a busy interval.';
-      return;
-    }
-
     const res = await fetch(`${API}/bookings/`, {
       method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'},
       body: JSON.stringify(payload)
     });
     const msg = document.getElementById('bookMsg');
-    const body = await res.json().catch(()=> ({}));
+    if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600); }
+    else { msg.textContent='❌ Failed to create booking'; }
+  });
+
+  // ======== REVIEWS ========
+  const reviewsModal = document.getElementById('reviewsModal');
+  const reviewsList = document.getElementById('reviewsList');
+  const reviewForm  = document.getElementById('reviewForm');
+  const reviewMsg   = document.getElementById('reviewMsg');
+  document.getElementById('reviewsClose').addEventListener('click', ()=> reviewsModal.close());
+
+  function openReviewsModal(adId){
+    document.getElementById('revAdId').textContent = adId;
+    document.getElementById('reviewAdId').value = adId;
+    reviewMsg.textContent = '';
+    reviewsList.innerHTML = 'Loading…';
+    reviewsModal.showModal();
+    reviewForm.style.display = access ? 'grid' : 'none'; // show form only for logged users
+    loadReviews(adId);
+  }
+
+  async function loadReviews(adId){
+    const res = await fetch(`${API}/reviews/?ad=${adId}&ordering=-created_at`);
+    if(!res.ok){ reviewsList.textContent = 'Failed to load reviews'; return; }
+    const items = (await res.json()).results || (Array.isArray(await res.json()) ? await res.json() : []);
+    if(!items.length){ reviewsList.innerHTML = '<div class="muted">No reviews yet.</div>'; return; }
+    const avg = (items.reduce((s, r)=> s + Number(r.rating||0), 0) / items.length).toFixed(1);
+    reviewsList.innerHTML = `
+      <div class="rating">⭐ ${avg} · ${items.length} review(s)</div>
+      <div style="margin-top:8px;"></div>
+      ${items.map(r => `
+        <div class="card" style="margin:8px 0;">
+          <div><b>${esc(r.tenant || '')}</b> · <span class="pill">${esc(r.rating)}/5</span></div>
+          <div class="muted">${esc(r.text || '')}</div>
+          <div class="muted">${esc(r.created_at || '')}</div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  reviewForm.addEventListener('submit', async (e)=>{
+    e.preventDefault();
+    if(!access){ alert('Login required'); return; }
+    const fd = new FormData(e.target);
+    const payload = Object.fromEntries(fd.entries());
+    // cast rating to number
+    payload.rating = Number(payload.rating);
+    const res = await fetch(`${API}/reviews/`, {
+      method:'POST',
+      headers:{...hAuth(), 'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
     if(res.ok){
-      msg.textContent='✅ Booking created';
-      setTimeout(()=>{ bookModal.close(); loadBookings(); }, 600);
+      reviewMsg.textContent = '✅ Review added';
+      e.target.reset();
+      loadReviews(document.getElementById('reviewAdId').value);
     } else {
-      msg.textContent = '❌ ' + (body.detail || (body.non_field_errors && body.non_field_errors[0]) || 'Failed to create booking');
+      const err = await res.json().catch(()=> ({}));
+      reviewMsg.textContent = '❌ ' + (err.detail || JSON.stringify(err));
     }
   });
 
   // ======== INIT ========
-  loadAds(); // public list on first load
+  loadTopSearches();
+  loadAds();
 </script>
 </body>
 </html>
