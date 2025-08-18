@@ -1,17 +1,25 @@
-from django.db.models import Q, Avg
+from django.db.models import Q, Avg, Count
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
-from drf_spectacular.utils import (extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample,
-                                   OpenApiResponse)
+from rest_framework.views import APIView
+from drf_spectacular.utils import (
+    extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes,
+    OpenApiExample, OpenApiResponse
+)
+from django.utils import timezone
 
-from .models import Ad, Booking, AdImage
-from .serializers import (AdSerializer, BookingSerializer, AdImageSerializer, AdImageUploadSerializer,
-                          AvailabilityItemSerializer)
-from .permissions import IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner
+from .models import Ad, Booking, AdImage, Review, SearchQuery, AdView
+from .serializers import (
+    AdSerializer, BookingSerializer, AdImageSerializer, AdImageUploadSerializer,
+    AvailabilityItemSerializer, ReviewSerializer
+)
+from .permissions import (
+    IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner, IsReviewOwnerOrAdmin
+)
 from .pagination import AdPagination
 
 
@@ -25,10 +33,10 @@ class AdFilter(df.FilterSet):
     rooms_max    = df.NumberFilter(field_name='rooms', lookup_expr='lte', label='Rooms max')
     location     = df.CharFilter(field_name='location', lookup_expr='icontains', label='Location (contains)')
     housing_type = df.CharFilter(field_name='housing_type', lookup_expr='iexact', label='Housing type (exact)')
-    area_min = df.NumberFilter(field_name='area', lookup_expr='gte', label='Area min (m²)')
-    area_max = df.NumberFilter(field_name='area', lookup_expr='lte', label='Area max (m²)')
+    area_min     = df.NumberFilter(field_name='area', lookup_expr='gte', label='Area min (m²)')
+    area_max     = df.NumberFilter(field_name='area', lookup_expr='lte', label='Area max (m²)')
 
-    q = df.CharFilter(method='filter_q', label='Search')
+    q    = df.CharFilter(method='filter_q', label='Search')
     mine = df.BooleanFilter(method='filter_mine', label='Only my ads')
 
     def filter_q(self, queryset, name, value):
@@ -51,8 +59,13 @@ class AdFilter(df.FilterSet):
 
     class Meta:
         model = Ad
-        fields = ['q', 'price_min', 'price_max', 'rooms_min', 'rooms_max', 'location', 'housing_type', 'area_min',
-                  'area_max', 'mine']
+        fields = [
+            'q', 'price_min', 'price_max',
+            'rooms_min', 'rooms_max',
+            'location', 'housing_type',
+            'area_min', 'area_max',
+            'mine',
+        ]
 
 
 # -------------------------
@@ -112,10 +125,15 @@ class AdFilter(df.FilterSet):
             OpenApiParameter(
                 name="ordering",
                 type=OpenApiTypes.STR,
-                description="Ordering: price, -price, created_at, -created_at",
+                description=(
+                    "Ordering: price, -price, created_at, -created_at, "
+                    "area, -area, reviews_count, -reviews_count, views_count, -views_count"
+                ),
                 examples=[
                     OpenApiExample("Cheapest first", value="price"),
                     OpenApiExample("Newest first", value="-created_at"),
+                    OpenApiExample("Most reviewed first", value="-reviews_count"),
+                    OpenApiExample("Most viewed first", value="-views_count"),
                 ],
             ),
             OpenApiParameter(
@@ -141,7 +159,7 @@ class AdFilter(df.FilterSet):
             OpenApiExample(
                 "Example query (URL)",
                 description="q=berlin&price_min=600&rooms_min=2&ordering=price&page=1&page_size=20",
-                value=None,  # informational only (query params above)
+                value=None,
             )
         ],
     ),
@@ -185,25 +203,67 @@ class AdViewSet(viewsets.ModelViewSet):
 
     filter_backends = (df.DjangoFilterBackend, filters.OrderingFilter)
     filterset_class = AdFilter
-    ordering_fields = ('price', 'created_at', 'area')
+    ordering_fields = ('price', 'created_at', 'area', 'reviews_count', 'views_count')
     ordering = ('-created_at',)
 
     def get_queryset(self):
-        # show only active ads + avg rating
+        # Show only active ads; annotate rating and popularity counters.
         return (
             super()
             .get_queryset()
             .filter(is_active=True)
-            .annotate(average_rating=Avg('reviews__rating'))
+            .annotate(
+                average_rating=Avg('reviews__rating'),
+                reviews_count=Count('reviews', distinct=True),
+                views_count=Count('views', distinct=True),
+            )
             .select_related('owner')
             .prefetch_related('images')
         )
 
-    def perform_create(self, serializer):
-        serializer.save(owner=self.request.user)
+    # --- search logging (list) ---
+    def list(self, request, *args, **kwargs):
+        response = super().list(request, *args, **kwargs)
+        try:
+            params = request.query_params
+            if params:
+                q = params.get('q', '') or ''
+                # compact filters snapshot
+                filters_dict = {k: v for k, v in params.items()}
+                ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+                ua = request.META.get('HTTP_USER_AGENT', '')
+                SearchQuery.objects.create(
+                    user=request.user if request.user.is_authenticated else None,
+                    q=q[:255],
+                    filters=filters_dict,
+                    ip=ip,
+                    user_agent=ua[:1000],
+                )
+        except Exception:
+            # logging must not break listing
+            pass
+        return response
+
+    # --- view logging (retrieve) ---
+    def retrieve(self, request, *args, **kwargs):
+        obj = self.get_object()
+        try:
+            ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+            ua = request.META.get('HTTP_USER_AGENT', '')
+            AdView.objects.create(
+                ad=obj,
+                user=request.user if request.user.is_authenticated else None,
+                ip=ip,
+                user_agent=ua[:1000],
+            )
+        except Exception:
+            # logging must not break retrieval
+            pass
+        serializer = self.get_serializer(obj)
+        return Response(serializer.data)
 
     def get_serializer_class(self):
-        """Use dedicated serializer for upload_image action"""
+        """Use dedicated serializer for upload_image action."""
         if getattr(self, 'action', None) == 'upload_image':
             return AdImageUploadSerializer
         return super().get_serializer_class()
@@ -211,10 +271,10 @@ class AdViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Upload image(s) for an ad (owner only)",
         description=(
-                "Send multipart/form-data.\n"
-                "- `image`: single file\n"
-                "- `images`: multiple files (repeat the field)\n"
-                "Optional `caption` applies to all files in the request."
+            "Send multipart/form-data.\n"
+            "- `image`: single file\n"
+            "- `images`: multiple files (repeat the field)\n"
+            "Optional `caption` applies to all files in the request."
         ),
         request=AdImageUploadSerializer,
         responses={201: OpenApiResponse(response=AdImageSerializer(many=True), description="Created images")},
@@ -277,6 +337,69 @@ class AdViewSet(viewsets.ModelViewSet):
         qs = qs.order_by('date_from').values('date_from', 'date_to', 'status')
         data = AvailabilityItemSerializer(qs, many=True).data
         return Response(data, status=status.HTTP_200_OK)
+
+
+# -------------------------
+# Review ViewSet
+# -------------------------
+@extend_schema_view(
+    list=extend_schema(
+        summary="List reviews",
+        parameters=[
+            OpenApiParameter(name="ad", type=OpenApiTypes.INT,
+                             description="Filter by ad id",
+                             examples=[OpenApiExample("For ad #1", value=1)]),
+            OpenApiParameter(name="ordering", type=OpenApiTypes.STR,
+                             description="Ordering: -created_at, created_at, -rating, rating"),
+        ],
+        auth=[],
+    ),
+    retrieve=extend_schema(summary="Retrieve review", auth=[]),
+    create=extend_schema(
+        summary="Create review (only after finished CONFIRMED booking)",
+        responses={201: OpenApiResponse(response=ReviewSerializer)},
+    ),
+    update=extend_schema(summary="Update review (author or staff)"),
+    partial_update=extend_schema(summary="Partial update review (author or staff)"),
+    destroy=extend_schema(summary="Delete review (author or staff)"),
+)
+class ReviewViewSet(viewsets.ModelViewSet):
+    queryset = Review.objects.select_related('ad', 'tenant').all()
+    serializer_class = ReviewSerializer
+    permission_classes = (permissions.IsAuthenticatedOrReadOnly, IsReviewOwnerOrAdmin)
+    filter_backends = (df.DjangoFilterBackend, filters.OrderingFilter)
+    filterset_fields = ('ad',)
+    ordering_fields = ('created_at', 'rating')
+    ordering = ('-created_at',)
+
+    def get_permissions(self):
+        if self.action in ('create',):
+            return (permissions.IsAuthenticated(),)
+        return super().get_permissions()
+
+    def perform_create(self, serializer):
+        user = self.request.user
+        ad = serializer.validated_data.get('ad')
+        if not ad:
+            raise ValidationError({"ad": "This field is required."})
+
+        # unique per (tenant, ad)
+        if Review.objects.filter(ad=ad, tenant=user).exists():
+            raise ValidationError({"detail": "You have already reviewed this ad."})
+
+        # must have a CONFIRMED booking ended in the past
+        today = timezone.now().date()
+        has_past_confirmed = Booking.objects.filter(
+            ad=ad,
+            tenant=user,
+            status=Booking.CONFIRMED,
+            date_to__lt=today
+        ).exists()
+        if not has_past_confirmed:
+            raise ValidationError({"detail": "You can review only after your confirmed booking has finished."})
+
+        serializer.save(tenant=user)
+
 
 # -------------------------
 # Booking ViewSet
@@ -398,3 +521,31 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking.status = Booking.CANCELLED
         booking.save(update_fields=['status'])
         return Response({'detail': 'Rejected'}, status=status.HTTP_200_OK)
+
+
+# -------------------------
+# Top search keywords
+# -------------------------
+@extend_schema(
+    summary="Top search keywords",
+    description="Return most frequent non-empty `q` values.",
+    parameters=[
+        OpenApiParameter(name="limit", type=OpenApiTypes.INT, description="Max items (default 10)",
+                         examples=[OpenApiExample("Top 5", value=5)])
+    ],
+    auth=[],
+)
+class SearchHistoryTopView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        limit = int(request.query_params.get('limit', 10) or 10)
+        limit = max(1, min(limit, 50))
+        qs = (
+            SearchQuery.objects
+            .exclude(q='')
+            .values('q')
+            .annotate(count=Count('id'))
+            .order_by('-count')[:limit]
+        )
+        return Response(list(qs), status=status.HTTP_200_OK)

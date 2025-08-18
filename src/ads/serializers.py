@@ -19,8 +19,13 @@ class ReviewSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Review
-        fields = ["id", "tenant", "rating", "text", "created_at"]
-        read_only_fields = ["id", "tenant", "created_at"]
+        fields = ('id', 'ad', 'tenant', 'rating', 'text', 'created_at', 'updated_at')
+        read_only_fields = ('id', 'tenant', 'created_at', 'updated_at')
+
+    def validate_rating(self, value):
+        if not (1 <= int(value) <= 5):
+            raise serializers.ValidationError("Rating must be between 1 and 5.")
+        return value
 
 
 class AdSerializer(serializers.ModelSerializer):
@@ -55,4 +60,5 @@ class AvailabilityItemSerializer(serializers.Serializer):
     date_from = serializers.DateField()
     date_to = serializers.DateField()
     status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
+
 

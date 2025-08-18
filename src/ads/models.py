@@ -1,5 +1,6 @@
 from django.db import models
 from django.conf import settings
+from django.utils.translation import gettext_lazy as _
 
 
 class Ad(models.Model):
@@ -49,39 +50,47 @@ class AdImage(models.Model):
 
 
 class Review(models.Model):
-    RATING_CHOICES = [(i, str(i)) for i in range(1, 6)]
-
-    ad = models.ForeignKey(Ad, on_delete=models.CASCADE, related_name='reviews')
+    ad = models.ForeignKey('Ad', on_delete=models.CASCADE, related_name='reviews')
     tenant = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='reviews')
-    rating = models.PositiveSmallIntegerField(choices=RATING_CHOICES)
+    rating = models.PositiveSmallIntegerField()
     text = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
-        unique_together = [('tenant', 'ad')]
+        unique_together = (('tenant', 'ad'),)
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['ad', 'tenant']),
+            models.Index(fields=['ad', 'rating']),
+        ]
 
     def __str__(self):
-        return f"Review {self.rating}/5 by {self.tenant_id} for Ad {self.ad_id}"
+        return f"Review {self.id} on {self.ad_id} by {self.tenant_id}"
+
+    def clean(self):
+        if not (1 <= int(self.rating) <= 5):
+            from django.core.exceptions import ValidationError
+            raise ValidationError({'rating': _('Rating must be between 1 and 5')})
 
 
 class SearchQuery(models.Model):
-    """Search log: user or anon, query, filters, ip/ua, timestamp"""
-    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='search_queries')
-    q = models.CharField(max_length=255, blank=True)  # raw query string
-    filters = models.JSONField(blank=True, null=True)  # serialized filters dict
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='search_queries'
+    )
+    q = models.CharField(max_length=255, blank=True, default='')
+    filters = models.JSONField(null=True, blank=True)
     ip = models.GenericIPAddressField(null=True, blank=True)
-    user_agent = models.CharField(max_length=255, blank=True)
-    ts = models.DateTimeField(auto_now_add=True)
+    user_agent = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
         indexes = [
-            models.Index(fields=['ts']),
+            models.Index(fields=['created_at']),
+            models.Index(fields=['q']),
         ]
-        ordering = ['-ts']
-
-    def __str__(self):
-        return f"Search by {self.user_id or 'anon'} at {self.ts:%Y-%m-%d %H:%M:%S}"
+        ordering = ['-created_at']
 
 
 class Booking(models.Model):
@@ -107,3 +116,19 @@ class Booking(models.Model):
 
     def __str__(self):
         return f"{self.tenant} → {self.ad} [{self.status}]"
+
+class AdView(models.Model):
+    ad = models.ForeignKey('Ad', on_delete=models.CASCADE, related_name='views')
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL,
+        null=True, blank=True, related_name='ad_views'
+    )
+    ip = models.GenericIPAddressField(null=True, blank=True)
+    user_agent = models.TextField(blank=True, default='')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['ad', 'created_at']),
+        ]
+        ordering = ['-created_at']
