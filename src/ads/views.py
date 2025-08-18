@@ -11,6 +11,7 @@ from drf_spectacular.utils import (
     OpenApiExample, OpenApiResponse
 )
 from django.utils import timezone
+from datetime import timedelta
 
 from .models import Ad, Booking, AdImage, Review, SearchQuery, AdView
 from .serializers import (
@@ -21,6 +22,8 @@ from .permissions import (
     IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner, IsReviewOwnerOrAdmin
 )
 from .pagination import AdPagination
+
+VIEW_DEDUP_HOURS = 6
 
 
 # -------------------------
@@ -248,17 +251,31 @@ class AdViewSet(viewsets.ModelViewSet):
     def retrieve(self, request, *args, **kwargs):
         obj = self.get_object()
         try:
-            ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
+            cutoff = timezone.now() - timedelta(hours=VIEW_DEDUP_HOURS)
+            ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get(
+                'REMOTE_ADDR')
             ua = request.META.get('HTTP_USER_AGENT', '')
-            AdView.objects.create(
-                ad=obj,
-                user=request.user if request.user.is_authenticated else None,
-                ip=ip,
-                user_agent=ua[:1000],
-            )
+
+            if request.user.is_authenticated:
+                exists = AdView.objects.filter(
+                    ad=obj, user=request.user, created_at__gte=cutoff
+                ).exists()
+                if not exists:
+                    AdView.objects.create(
+                        ad=obj, user=request.user, ip=ip, user_agent=ua[:1000]
+                    )
+            else:
+                exists = AdView.objects.filter(
+                    ad=obj, user__isnull=True, ip=ip, created_at__gte=cutoff
+                ).exists()
+                if not exists:
+                    AdView.objects.create(
+                        ad=obj, user=None, ip=ip, user_agent=ua[:1000]
+                    )
         except Exception:
-            # logging must not break retrieval
+            # logging must never block retrieve
             pass
+
         serializer = self.get_serializer(obj)
         return Response(serializer.data)
 
