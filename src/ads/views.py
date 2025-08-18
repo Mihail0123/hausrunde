@@ -3,11 +3,12 @@ from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
+from rest_framework.parsers import MultiPartParser, FormParser
 from drf_spectacular.utils import (extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes, OpenApiExample,
                                    OpenApiResponse)
 
-from .models import Ad, Booking
-from .serializers import AdSerializer, BookingSerializer
+from .models import Ad, Booking, AdImage
+from .serializers import AdSerializer, BookingSerializer, AdImageSerializer, AdImageUploadSerializer
 from .permissions import IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner
 from .pagination import AdPagination
 
@@ -184,6 +185,35 @@ class AdViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(owner=self.request.user)
+
+    @extend_schema(
+        summary="Upload image(s) for an ad (owner only)",
+        description=(
+                "Send multipart/form-data.\n"
+                "- `image`: single file\n"
+                "- `images`: multiple files (repeat the field)\n"
+                "Optional `caption` applies to all files in the request."
+        ),
+        request=AdImageUploadSerializer,
+        responses={201: OpenApiResponse(response=AdImageSerializer(many=True), description="Created images")},
+    )
+    @action(detail=True, methods=["post"], url_path="images", parser_classes=[MultiPartParser, FormParser])
+    def upload_image(self, request, pk=None):
+        """Create one or many AdImage objects for the Ad."""
+        ad = self.get_object()
+        # Enforce object-level permission (IsAdOwnerOrReadOnly)
+        self.check_object_permissions(request, ad)
+
+        files = request.FILES.getlist("images") or request.FILES.getlist("image")
+        if not files:
+            return Response(
+                {"detail": 'No files provided. Use "image" or repeated "images".'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        caption = request.data.get("caption", "")
+        created = [AdImage.objects.create(ad=ad, image=f, caption=caption) for f in files]
+        return Response(AdImageSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
 
 
 # -------------------------

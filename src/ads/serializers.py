@@ -8,6 +8,11 @@ class AdImageSerializer(serializers.ModelSerializer):
         fields = ["id", "image", "caption", "created_at"]
         read_only_fields = ["id", "created_at"]
 
+class AdImageUploadSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = AdImage
+        fields = ["image", "caption"]
+
 
 class ReviewSerializer(serializers.ModelSerializer):
     tenant = serializers.StringRelatedField(read_only=True)
