@@ -2,7 +2,7 @@ from django.db.models import Q, Avg, Count
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError
+from rest_framework.exceptions import ValidationError, PermissionDenied
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
@@ -210,7 +210,7 @@ class AdViewSet(viewsets.ModelViewSet):
     ordering = ('-created_at',)
 
     def get_queryset(self):
-        # Show only active ads; annotate rating and popularity counters.
+        # Only active ads; annotate rating and popularity counters.
         return (
             super()
             .get_queryset()
@@ -252,8 +252,7 @@ class AdViewSet(viewsets.ModelViewSet):
         obj = self.get_object()
         try:
             cutoff = timezone.now() - timedelta(hours=VIEW_DEDUP_HOURS)
-            ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get(
-                'REMOTE_ADDR')
+            ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
             ua = request.META.get('HTTP_USER_AGENT', '')
 
             if request.user.is_authenticated:
@@ -418,6 +417,66 @@ class ReviewViewSet(viewsets.ModelViewSet):
         serializer.save(tenant=user)
 
 
+# Helper: cancellation quote calculator (module-level, no indent)
+def _compute_cancel_quote(booking):
+    """
+    Policy:
+      - Free: if start is in >= 3 full days.
+      - Less than 3 full days left: 20% per each day inside the 3-day window (20/40/60%).
+      - Start already reached: no refund (100% fee).
+
+    Total cost is calculated as: daily price * number of nights.
+    Assumes `Ad.price` is a per-day price.
+    """
+    today = timezone.now().date()
+    days_until = (booking.date_from - today).days  # full days till start (can be negative)
+    FREE_CUTOFF = 3
+
+    # fee % (0.0 .. 1.0)
+    if days_until >= FREE_CUTOFF:
+        fee_pct = 0.0
+    elif days_until >= 0:
+        fee_pct = 0.2 * (FREE_CUTOFF - days_until)  # 0.2, 0.4, 0.6
+    else:
+        fee_pct = 1.0  # after start
+
+    # cost basis
+    daily_price = float(getattr(booking.ad, "price", 0) or 0)
+    nights = max(1, (booking.date_to - booking.date_from).days)  # treat date_to as checkout date
+    total_cost = daily_price * nights
+    fee_amount = round(total_cost * fee_pct, 2)
+
+    # user-facing message
+    if days_until >= FREE_CUTOFF:
+        msg = (
+            "Free cancellation is possible only 3 days prior to start date. "
+            "Your cancellation fee would be €0.00 (0%)."
+        )
+    elif days_until >= 0:
+        msg = (
+            "Free cancellation is possible only 3 days prior to start date; "
+            "then 20% of total cost per day. "
+            f"Your cancellation fee would be €{fee_amount} ({round(fee_pct*100,2)}%)."
+        )
+    else:
+        msg = (
+            "Start date has already begun; no refund is provided. "
+            "Are you sure you want to cancel your booking?"
+        )
+
+    return {
+        "days_until_start": days_until,
+        "free_cancellation_cutoff_days": FREE_CUTOFF,
+        "fee_percent": round(fee_pct * 100, 2),  # percent value (0–100)
+        "fee_amount": fee_amount,
+        "currency": "EUR",
+        "nights": nights,
+        "total_cost": round(total_cost, 2),
+        "after_start": days_until < 0,
+        "message": msg,
+    }
+
+
 # -------------------------
 # Booking ViewSet
 # -------------------------
@@ -474,7 +533,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         ).select_related('ad', 'tenant')
 
     def get_serializer_context(self):
-        """Be explicit: ensure request is in serializer context."""
+        """Ensure request is in serializer context."""
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
         return ctx
@@ -487,19 +546,72 @@ class BookingViewSet(viewsets.ModelViewSet):
         serializer.save(tenant=self.request.user)
 
     @extend_schema(
-        summary="Cancel booking (tenant only)",
+        summary="Preview cancellation fee (tenant only)",
+        description=(
+                "Returns a computed cancellation quote under the current policy:\n"
+                "- Free if there are >= 3 full days until start\n"
+                "- If < 3 days remain: 20% of total per day that falls inside the 3-day window (20/40/60%)\n"
+                "- If the start has already begun: no refund (100% fee)\n\n"
+                "Tenant only. Allowed statuses: PENDING, CONFIRMED."
+        ),
+        responses={200: OpenApiResponse(description="Cancellation quote as JSON")}
+    )
+    @action(detail=True, methods=['get'], url_path='cancel-quote')
+    def cancel_quote(self, request, pk=None):
+        booking = self.get_object()
+
+        # Only the tenant can preview/cancel this booking
+        if booking.tenant_id != request.user.id:
+            raise PermissionDenied("Only the booking tenant can preview/cancel this booking.")
+
+        if booking.status not in (Booking.PENDING, Booking.CONFIRMED):
+            return Response({'detail': f'Cannot cancel booking with status {booking.status}.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        quote = _compute_cancel_quote(booking)
+        return Response(quote, status=status.HTTP_200_OK)
+
+    @extend_schema(
+        summary="Cancel booking (tenant only, with fee policy)",
+        description=(
+                "Tenant only. Cancellation is always allowed, but the fee applies as follows:\n"
+                "- Free if there are >= 3 full days until start\n"
+                "- If < 3 days remain: 20% per day inside the 3-day window (20/40/60%)\n"
+                "- If the start has already begun: no refund (100% fee)\n\n"
+                "Response includes the computed `cancel_quote`."
+        ),
         responses={
-            200: OpenApiResponse(description="Booking cancelled"),
-            403: OpenApiResponse(description="Forbidden"),
+            200: OpenApiResponse(description="Booking cancelled (returns cancel quote)"),
+            400: OpenApiResponse(description="Invalid status / already cancelled"),
+            403: OpenApiResponse(description="Forbidden (not booking tenant)"),
             404: OpenApiResponse(description="Not found"),
         }
     )
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
         booking = self.get_object()
+
+        # Only the tenant can cancel
+        if booking.tenant_id != request.user.id:
+            raise PermissionDenied("Only the booking tenant can cancel this booking.")
+
+        # Already cancelled
+        if booking.status == Booking.CANCELLED:
+            return Response({'detail': 'Already cancelled'}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Allowed statuses
+        if booking.status not in (Booking.PENDING, Booking.CONFIRMED):
+            return Response({'detail': f'Cannot cancel booking with status {booking.status}.'},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # Compute the quote (for UI and possible logging)
+        quote = _compute_cancel_quote(booking)
+
+        # Apply cancellation
         booking.status = Booking.CANCELLED
         booking.save(update_fields=['status'])
-        return Response({'detail': 'Cancelled'}, status=status.HTTP_200_OK)
+
+        return Response({'detail': 'Cancelled', 'cancel_quote': quote}, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Confirm booking (ad owner only)",
@@ -513,6 +625,9 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         booking = self.get_object()
+        # only ad owner can confirm/reject this booking
+        if booking.ad.owner_id != request.user.id:
+            raise PermissionDenied("Only the booking owner can confirm this booking.")
         booking.status = Booking.CONFIRMED
         booking.save(update_fields=['status'])
         # auto-cancel overlapping pending bookings
@@ -535,6 +650,9 @@ class BookingViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         booking = self.get_object()
+        # only ad owner can confirm/reject this booking
+        if booking.ad.owner_id != request.user.id:
+            raise PermissionDenied("Only the booking owner can reject this booking.")
         booking.status = Booking.CANCELLED
         booking.save(update_fields=['status'])
         return Response({'detail': 'Rejected'}, status=status.HTTP_200_OK)

@@ -497,13 +497,53 @@
 
     // handlers
     Array.prototype.forEach.call(box.querySelectorAll('button[data-act]'), function(btn){
-      btn.addEventListener('click', async function(){
-        var id = btn.getAttribute('data-id'), act = btn.getAttribute('data-act');
-        var r = await fetch(API + "/bookings/" + id + "/" + act + "/", { method:'POST', headers:hAuth() });
-        if(!r.ok) alert('Action failed ('+act+')');
+  btn.addEventListener('click', async function(){
+    var id  = btn.getAttribute('data-id');
+    var act = btn.getAttribute('data-act');
+
+    if (act === 'cancel') {
+      try {
+        // 1) get quote
+        var q = await fetch(API + "/bookings/" + id + "/cancel-quote/", { headers: hAuth() });
+        if (!q.ok) { alert('Failed to get cancellation quote'); return; }
+        var quote = await q.json();
+
+        // 2) build message
+        var pct   = (typeof quote.fee_percent === 'number') ? quote.fee_percent.toFixed(0) : '0';
+        var amt   = (typeof quote.fee_amount  === 'number') ? quote.fee_amount.toFixed(2)  : '0.00';
+        var total = (typeof quote.total_cost  === 'number') ? quote.total_cost.toFixed(2)  : '0.00';
+
+        var msg = (quote.message || '')
+          + "\n\nTotal cost: €" + total
+          + "\nCancellation fee: €" + amt + " (" + pct + "%)."
+          + "\n\nConfirm cancellation?";
+
+        // 3) confirm
+        if (!confirm(msg)) return;
+
+        // 4) cancel
+        var r = await fetch(API + "/bookings/" + id + "/cancel/", { method: 'POST', headers: hAuth() });
+        if (!r.ok) {
+          var err = {};
+          try { err = await r.json(); } catch(e){}
+          alert('Cancel failed: ' + (err.detail || r.status));
+          return;
+        }
+        alert('Booking cancelled.');
         await loadBookings();
-      });
-    });
+        return;
+      } catch (e) {
+        alert('Cancel failed.');
+        return;
+      }
+    }
+
+    // default for confirm/reject
+    var r2 = await fetch(API + "/bookings/" + id + "/" + act + "/", { method: 'POST', headers: hAuth() });
+    if (!r2.ok) alert('Action failed (' + act + ')');
+    await loadBookings();
+  });
+});
   }
 
   // Create booking (form)
