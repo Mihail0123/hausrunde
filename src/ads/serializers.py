@@ -31,7 +31,9 @@ class ReviewSerializer(serializers.ModelSerializer):
 class AdSerializer(serializers.ModelSerializer):
     owner = serializers.StringRelatedField(read_only=True)
     images = AdImageSerializer(many=True, read_only=True)
-    average_rating = serializers.FloatField(read_only=True)  # получаем из annotate()
+    average_rating = serializers.FloatField(read_only=True)
+    reviews_count = serializers.IntegerField(read_only=True)
+    views_count = serializers.IntegerField(read_only=True)
 
     class Meta:
         model = Ad
@@ -42,9 +44,12 @@ class AdSerializer(serializers.ModelSerializer):
             "is_active", "is_demo",
             "owner", "created_at", "updated_at",
             "images",
-            "average_rating",
+            "average_rating", "reviews_count", "views_count",
         ]
-        read_only_fields = ["id", "owner", "created_at", "updated_at", "images", "average_rating"]
+        read_only_fields = [
+            "id", "owner", "created_at", "updated_at",
+            "images", "average_rating", "reviews_count", "views_count",
+        ]
 
 
 class BookingSerializer(serializers.ModelSerializer):
