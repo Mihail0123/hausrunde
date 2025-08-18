@@ -130,5 +130,7 @@ class AdView(models.Model):
     class Meta:
         indexes = [
             models.Index(fields=['ad', 'created_at']),
+            models.Index(fields=['ad', 'user', 'created_at'], name='idx_adview_ad_user_created'),
+            models.Index(fields=['ad', 'ip', 'created_at'],   name='idx_adview_ad_ip_created'),
         ]
         ordering = ['-created_at']
