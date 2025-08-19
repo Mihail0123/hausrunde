@@ -4,6 +4,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import viewsets, permissions, status
 from rest_framework import serializers as rf_serializers
 from rest_framework.response import Response
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
@@ -115,6 +116,13 @@ class CustomUserViewSet(viewsets.ModelViewSet):
 class LoginView(APIView):
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
+
+    # Throttle only POST attempts
+    throttle_classes = (ScopedRateThrottle,)
+
+    def get_throttles(self):
+        self.throttle_scope = 'auth_login' if self.request.method == 'POST' else None
+        return super().get_throttles()
 
     @extend_schema(
         request=None,

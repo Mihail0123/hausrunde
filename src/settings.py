@@ -171,6 +171,26 @@ REST_FRAMEWORK = {
         'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.OrderingFilter',
     ),
+    # Throttling
+    'DEFAULT_THROTTLE_CLASSES': (
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ),
+    'DEFAULT_THROTTLE_RATES': {
+        # Baseline limits
+        'user': '1000/day',
+        'anon': '200/day',
+        # Scoped limits
+        'ads_list': '60/min',
+        'ads_retrieve': '240/min',
+        'ads_availability': '120/min',
+        'adimage_upload': '10/min',
+        'adimage_replace': '10/min',
+        'bookings_mutation': '30/hour',
+        'auth_login': '10/min',
+        'search_top': '30/min',
+    },
 }
 
 SIMPLE_JWT = {

@@ -6,6 +6,7 @@ from rest_framework.exceptions import ValidationError, PermissionDenied, MethodN
 from rest_framework.response import Response
 from rest_framework import serializers as rf_serializers
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from drf_spectacular.utils import (
     extend_schema_view, extend_schema, OpenApiParameter, OpenApiTypes,
@@ -304,6 +305,24 @@ class AdViewSet(viewsets.ModelViewSet):
     filterset_class = AdFilter
     ordering_fields = ('price', 'created_at', 'area', 'reviews_count', 'views_count')
     ordering = ('-created_at',)
+
+    # Per-action throttling
+    throttle_classes = (ScopedRateThrottle,)
+
+    def get_throttles(self):
+        # Map actions to throttle scopes
+        action = getattr(self, 'action', None)
+        if action == 'list':
+            self.throttle_scope = 'ads_list'
+        elif action == 'retrieve':
+            self.throttle_scope = 'ads_retrieve'
+        elif action == 'availability':
+            self.throttle_scope = 'ads_availability'
+        elif action == 'upload_image':
+            self.throttle_scope = 'adimage_upload'
+        else:
+            self.throttle_scope = None
+        return super().get_throttles()
 
     def get_queryset(self):
         """
@@ -705,6 +724,14 @@ class AdImageViewSet(viewsets.ModelViewSet):
     filter_backends = (df.DjangoFilterBackend,)
     filterset_fields = ('ad',)
 
+    # Per-action throttling
+    throttle_classes = (ScopedRateThrottle,)
+
+    def get_throttles(self):
+        # Only throttle the 'replace' action
+        self.throttle_scope = 'adimage_replace' if getattr(self, 'action', None) == 'replace' else None
+        return super().get_throttles()
+
     def create(self, request, *args, **kwargs):
         # Disallow POST /api/ad-images/ (file upload happens via /api/ads/{id}/images/ and /ad-images/{id}/replace/)
         raise MethodNotAllowed('POST')
@@ -814,6 +841,15 @@ class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
     permission_classes = (permissions.IsAuthenticated, IsBookingOwnerOrAdOwner)
+
+    # Per-action throttling
+    throttle_classes = (ScopedRateThrottle,)
+
+    def get_throttles(self):
+        # Throttle mutating actions only
+        action = getattr(self, 'action', None)
+        self.throttle_scope = 'bookings_mutation' if action in ('create', 'confirm', 'reject', 'cancel') else None
+        return super().get_throttles()
 
     def get_queryset(self):
         user = self.request.user
@@ -973,6 +1009,13 @@ class SearchTopItemSerializer(rf_serializers.Serializer):
 )
 class SearchHistoryTopView(APIView):
     permission_classes = [permissions.AllowAny]
+
+    # Throttle search-top endpoint
+    throttle_classes = (ScopedRateThrottle,)
+
+    def get_throttles(self):
+        self.throttle_scope = 'search_top'
+        return super().get_throttles()
 
     def get(self, request):
         limit = int(request.query_params.get('limit', 10) or 10)
