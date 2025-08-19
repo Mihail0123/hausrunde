@@ -209,11 +209,6 @@ class AdViewSet(viewsets.ModelViewSet):
     ordering_fields = ('price', 'created_at', 'area', 'reviews_count', 'views_count')
     ordering = ('-created_at',)
 
-    def get_serializer_context(self):
-        ctx = super().get_serializer_context()
-        ctx['request'] = self.request
-        return ctx
-
     def get_queryset(self):
         # Only active ads; annotate rating and popularity counters.
         return (
@@ -647,10 +642,9 @@ class BookingViewSet(viewsets.ModelViewSet):
         return ctx
 
     def perform_create(self, serializer):
-        """Forbid booking own ad and set tenant."""
-        ad = serializer.validated_data.get('ad')
-        if ad and ad.owner_id == self.request.user.id:
-            raise ValidationError({"detail": "You cannot book your own ad."})
+        """
+        Set tenant; validation lives in serializer.validate().
+        """
         serializer.save(tenant=self.request.user)
 
     @extend_schema(

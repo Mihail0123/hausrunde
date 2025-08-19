@@ -1,4 +1,6 @@
 from rest_framework import serializers
+from datetime import date
+
 from .models import Ad, Booking, AdImage, Review
 
 
@@ -30,10 +32,10 @@ class AdImageSerializer(serializers.ModelSerializer):
 
 class AdImageCaptionUpdateSerializer(serializers.ModelSerializer):
     """Allow updating caption only (used by PATCH on single image)."""
+
     class Meta:
         model = AdImage
         fields = ("caption",)
-
 
 
 class AdImageUploadSerializer(serializers.Serializer):
@@ -89,8 +91,64 @@ class BookingSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Booking
-        fields = ("id", "ad", "tenant", "date_from", "date_to", "status", "created_at")
+        fields = (
+            "id", "ad", "tenant",
+            "date_from", "date_to",
+            "status", "created_at"
+        )
         read_only_fields = ("id", "tenant", "status", "created_at")
+
+    def validate(self, data):
+        """Global validation for booking creation and update."""
+        request = self.context.get("request")
+        user = getattr(request, "user", None)
+
+        ad = data.get("ad") or getattr(self.instance, "ad", None)
+        date_from = data.get("date_from") or getattr(self.instance, "date_from", None)
+        date_to = data.get("date_to") or getattr(self.instance, "date_to", None)
+
+        errors = {}
+
+        # Required fields
+        if not ad:
+            errors["ad"] = "This field is required."
+        if not date_from:
+            errors["date_from"] = "This field is required."
+        if not date_to:
+            errors["date_to"] = "This field is required."
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        # Chronological order (min 1 night)
+        if date_from >= date_to:
+            errors["date_to"] = "`date_to` must be later than `date_from`."
+
+        # Ad must be active
+        if ad and not getattr(ad, "is_active", True):
+            errors["ad"] = "This ad is inactive and cannot be booked."
+
+        # Forbid booking own ad
+        if user and getattr(ad, "owner_id", None) == getattr(user, "id", None):
+            errors.setdefault("non_field_errors", []).append("You cannot book your own ad.")
+
+        # Prevent overlaps with existing PENDING/CONFIRMED bookings
+        if ad and date_from and date_to:
+            qs = Booking.objects.filter(
+                ad=ad,
+                status__in=[Booking.PENDING, Booking.CONFIRMED],
+                date_from__lt=date_to,
+                date_to__gt=date_from,
+            )
+            if self.instance:
+                qs = qs.exclude(pk=self.instance.pk)
+            if qs.exists():
+                errors.setdefault("non_field_errors", []).append(
+                    "Selected dates overlap with an existing booking."
+                )
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return data
 
 
 class AvailabilityItemSerializer(serializers.Serializer):
