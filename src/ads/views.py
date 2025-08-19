@@ -16,7 +16,7 @@ from datetime import timedelta
 from .models import Ad, Booking, AdImage, Review, SearchQuery, AdView
 from .serializers import (
     AdSerializer, BookingSerializer, AdImageSerializer, AdImageUploadSerializer,
-    AvailabilityItemSerializer, ReviewSerializer
+    AvailabilityItemSerializer, ReviewSerializer, AdImageCaptionUpdateSerializer
 )
 from .permissions import (
     IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner, IsReviewOwnerOrAdmin
@@ -553,11 +553,11 @@ def _compute_cancel_quote(booking):
 )
 class AdImageViewSet(viewsets.ModelViewSet):
     """
-    POST/CREATE отключен: загрузка идёт через /api/ads/{id}/images/.
-    Здесь доступны:
-      - GET /api/ad-images/?ad=ID — список картинок объявления
-      - PATCH /api/ad-images/{id}/ {"caption": "..."} — правка подписи (только владелец объявления)
-      - DELETE /api/ad-images/{id}/ — удалить (только владелец объявления)
+    POST/CREATE disabled: upload happens via /api/ads/{id}/images/.
+    This ViewSet supports:
+      - GET    /api/ad-images/?ad=ID
+      - PATCH  /api/ad-images/{id}/     {"caption": "..."}  (owner only)
+      - DELETE /api/ad-images/{id}/                         (owner only)
     """
     queryset = AdImage.objects.select_related('ad').all()
     serializer_class = AdImageSerializer
@@ -565,6 +565,12 @@ class AdImageViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'patch', 'delete', 'head', 'options']
     filter_backends = (df.DjangoFilterBackend,)
     filterset_fields = ('ad',)
+
+    def get_serializer_class(self):
+        # Use caption-only serializer for PATCH to avoid replacing the file
+        if self.action == "partial_update":
+            return AdImageCaptionUpdateSerializer
+        return super().get_serializer_class()
 
     def _is_owner(self, obj):
         u = self.request.user
@@ -603,35 +609,6 @@ class AdImageViewSet(viewsets.ModelViewSet):
         summary="Delete image (ad owner only)",
     ),
 )
-class AdImageViewSet(viewsets.ModelViewSet):
-    """
-    POST/CREATE отключен: загрузка идёт через /api/ads/{id}/images/.
-    Здесь доступны:
-      - GET /api/ad-images/?ad=ID — список картинок объявления
-      - PATCH /api/ad-images/{id}/ {"caption": "..."} — правка подписи (только владелец объявления)
-      - DELETE /api/ad-images/{id}/ — удалить (только владелец объявления)
-    """
-    queryset = AdImage.objects.select_related('ad').all()
-    serializer_class = AdImageSerializer
-    permission_classes = (permissions.IsAuthenticatedOrReadOnly,)
-    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
-    filter_backends = (df.DjangoFilterBackend,)
-    filterset_fields = ('ad',)
-
-    def _is_owner(self, obj):
-        u = self.request.user
-        return bool(u and u.is_authenticated and (u.is_staff or getattr(obj.ad, "owner_id", None) == u.id))
-
-    def perform_update(self, serializer):
-        obj = self.get_object()
-        if not self._is_owner(obj):
-            raise PermissionDenied("Only the ad owner can update image metadata.")
-        serializer.save()
-
-    def perform_destroy(self, instance):
-        if not self._is_owner(instance):
-            raise PermissionDenied("Only the ad owner can delete images.")
-        instance.delete()
 
 
 class BookingViewSet(viewsets.ModelViewSet):

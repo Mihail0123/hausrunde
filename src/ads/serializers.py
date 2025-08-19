@@ -28,6 +28,13 @@ class AdImageSerializer(serializers.ModelSerializer):
             return ""
 
 
+class AdImageCaptionUpdateSerializer(serializers.ModelSerializer):
+    """Allow updating caption only (used by PATCH on single image)."""
+    class Meta:
+        model = AdImage
+        fields = ("caption",)
+
+
 
 class AdImageUploadSerializer(serializers.Serializer):
     """
