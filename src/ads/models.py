@@ -27,9 +27,9 @@ class Ad(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=['price']),
-            models.Index(fields=['rooms']),
-            models.Index(fields=['area']),
+            models.Index(fields=['is_active', 'created_at'], name='ad_active_created_idx'),
+            models.Index(fields=['latitude', 'longitude'], name='ad_lat_lon_idx'),
+            models.Index(fields=['housing_type'], name='ad_housing_type_idx'),
         ]
 
     def __str__(self):
@@ -87,8 +87,8 @@ class SearchQuery(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=['created_at']),
-            models.Index(fields=['q']),
+            models.Index(fields=['q'], name='searchquery_q_idx'),
+            models.Index(fields=['created_at'], name='searchquery_created_idx'),
         ]
         ordering = ['-created_at']
 
@@ -113,9 +113,17 @@ class Booking(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(
+                fields=['ad', 'status', 'date_from', 'date_to'],
+                name='booking_overlap_idx',
+            ),
+        ]
+
 
     def __str__(self):
         return f"{self.tenant} → {self.ad} [{self.status}]"
+
 
 class AdView(models.Model):
     ad = models.ForeignKey('Ad', on_delete=models.CASCADE, related_name='views')
@@ -129,8 +137,7 @@ class AdView(models.Model):
 
     class Meta:
         indexes = [
-            models.Index(fields=['ad', 'created_at']),
-            models.Index(fields=['ad', 'user', 'created_at'], name='idx_adview_ad_user_created'),
-            models.Index(fields=['ad', 'ip', 'created_at'],   name='idx_adview_ad_ip_created'),
+            models.Index(fields=['ad', 'user', 'created_at'], name='adview_user_dedup_idx'),
+            models.Index(fields=['ad', 'ip', 'created_at'], name='adview_ip_dedup_idx'),
         ]
         ordering = ['-created_at']
