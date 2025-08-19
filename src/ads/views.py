@@ -210,11 +210,12 @@ class AdViewSet(viewsets.ModelViewSet):
     ordering = ('-created_at',)
 
     def get_queryset(self):
-        # Only active ads; annotate rating and popularity counters.
-        return (
-            super()
-            .get_queryset()
-            .filter(is_active=True)
+        """
+        Base queryset with aggregates. Public users see only active ads.
+        When ?mine=true and user is authenticated, include owner's inactive ads as well.
+        """
+        qs = (
+            Ad.objects.all()
             .annotate(
                 average_rating=Avg('reviews__rating'),
                 reviews_count=Count('reviews', distinct=True),
@@ -223,6 +224,19 @@ class AdViewSet(viewsets.ModelViewSet):
             .select_related('owner')
             .prefetch_related('images')
         )
+
+        # Detect ?mine=true (truthy variants: 1,true,yes,on)
+        try:
+            mine_param = self.request.query_params.get('mine', '')
+            mine = str(mine_param).lower() in {'1', 'true', 'yes', 'on'}
+        except Exception:
+            mine = False
+
+        # For everyone except the owner-view (?mine=true), restrict to active ads
+        if not (mine and self.request.user.is_authenticated):
+            qs = qs.filter(is_active=True)
+
+        return qs
 
     # --- search logging (list) ---
     def list(self, request, *args, **kwargs):
