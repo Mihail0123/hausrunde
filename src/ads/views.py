@@ -13,6 +13,8 @@ from drf_spectacular.utils import (
 )
 from django.utils import timezone
 from django.utils.dateparse import parse_date
+from django.conf import settings
+from django.core.exceptions import ValidationError as DjangoValidationError
 from datetime import timedelta
 
 from .models import Ad, Booking, AdImage, Review, SearchQuery, AdView
@@ -24,6 +26,7 @@ from .permissions import (
     IsAdOwnerOrReadOnly, IsBookingOwnerOrAdOwner, IsReviewOwnerOrAdmin
 )
 from .pagination import AdPagination
+from .validators import validate_image_file
 
 VIEW_DEDUP_HOURS = 6
 
@@ -399,13 +402,16 @@ class AdViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Upload image(s) for an ad (owner only)",
         description=(
-            "Send multipart/form-data.\n"
-            "- `image`: single file\n"
-            "- `images`: multiple files (repeat the field)\n"
-            "Optional `caption` applies to all files in the request."
+                "Send multipart/form-data.\n"
+                "- `image`: single file\n"
+                "- `images`: multiple files (repeat the field)\n"
+                "Optional `caption` applies to all files in the request."
         ),
         request=AdImageUploadSerializer,
-        responses={201: OpenApiResponse(response=AdImageSerializer(many=True), description="Created images")},
+        responses={
+            201: OpenApiResponse(response=AdImageSerializer(many=True), description="Created images"),
+            400: OpenApiResponse(description="Invalid image or limit exceeded"),
+        },
     )
     @action(detail=True, methods=["post"], url_path="images", parser_classes=[MultiPartParser, FormParser])
     def upload_image(self, request, pk=None):
@@ -414,7 +420,7 @@ class AdViewSet(viewsets.ModelViewSet):
         # object-level permission (IsAdOwnerOrReadOnly)
         self.check_object_permissions(request, ad)
 
-        # validate only known fields (caption + optional single "image")
+        # validate known fields only (caption + optional single "image")
         payload = {"caption": request.data.get("caption", "")}
         if "image" in request.FILES:
             payload["image"] = request.FILES["image"]
@@ -435,8 +441,77 @@ class AdViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
 
-        created = [AdImage.objects.create(ad=ad, image=f, caption=caption) for f in files]
-        return Response(AdImageSerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+        # enforce per-ad image limit BEFORE creating anything
+        existing = ad.images.count()
+        incoming = len(files)
+        max_total = int(getattr(settings, "AD_IMAGES_MAX_PER_AD", 20))
+        if existing + incoming > max_total:
+            return Response(
+                {
+                    "detail": f"Too many images. Limit {max_total} per ad. "
+                              f"You already have {existing}, tried to add {incoming}."
+                },
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # validate each file (size/format/dimensions)
+        errors = []
+        valid_files = []
+        for idx, f in enumerate(files, start=1):
+            try:
+                validate_image_file(f)
+                valid_files.append(f)
+            except DjangoValidationError as e:
+                errors.append({"file_index": idx, "error": str(e)})
+
+        if errors:
+            return Response({"detail": "Invalid images", "errors": errors}, status=status.HTTP_400_BAD_REQUEST)
+
+        created = [AdImage.objects.create(ad=ad, image=f, caption=caption) for f in valid_files]
+        return Response(AdImageSerializer(created, many=True, context={'request': request}).data,
+                        status=status.HTTP_201_CREATED)
+
+    @extend_schema(
+        summary="Replace image file (owner only)",
+        description="Multipart: field `image` (required), optional `caption` to update together with file.",
+        request=None,
+        responses={
+            200: OpenApiResponse(response=AdImageSerializer),
+            400: OpenApiResponse(description="Invalid image or limit exceeded"),
+        },
+    )
+    @action(detail=True, methods=['post'], url_path='replace', parser_classes=[MultiPartParser])
+    def replace(self, request, pk=None):
+        """
+        Replace the image file for an existing AdImage. Owner-only.
+        Expects multipart with field 'image'; optional 'caption'.
+        """
+        obj = self.get_object()
+        if not self._is_owner(obj):
+            raise PermissionDenied("Only the ad owner can replace images.")
+
+        file = request.FILES.get('image')
+        if not file:
+            return Response({"detail": "Provide file in 'image' field (multipart)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # validate new file before saving
+        try:
+            validate_image_file(file)
+        except DjangoValidationError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        # replace file
+        obj.image = file
+
+        # optional caption update
+        caption = request.data.get('caption')
+        if caption is not None:
+            obj.caption = caption
+        obj.save(update_fields=['image', 'caption'] if caption is not None else ['image'])
+
+        # return fresh representation (with computed URLs)
+        return Response(AdImageSerializer(obj, context={'request': request}).data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Ad availability (busy intervals)",

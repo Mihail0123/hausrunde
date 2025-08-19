@@ -146,6 +146,14 @@ STATIC_URL = 'static/'
 
 # user media uploads
 
+# --- Image constraints ---
+AD_IMAGES_MAX_PER_AD = 20          # max photos per ad
+AD_IMAGE_MAX_MB = 5                # max file size in MB
+AD_IMAGE_ALLOWED_FORMATS = {"JPEG", "PNG", "WEBP"}  # allowed formats
+AD_IMAGE_MAX_WIDTH = 6000          # max width in pixels
+AD_IMAGE_MAX_HEIGHT = 6000         # max height in pixels
+
+
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
