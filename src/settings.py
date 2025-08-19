@@ -38,14 +38,6 @@ ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-
-
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
-
-ALLOWED_HOSTS = []
-
-
 # Application definition
 
 INSTALLED_APPS = [
@@ -168,8 +160,7 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
     'DEFAULT_FILTER_BACKENDS': (
-        'django_filters.rest_framework.DjangoFilterBackend',  # <- важно
-        'rest_framework.filters.SearchFilter',
+        'django_filters.rest_framework.DjangoFilterBackend',
         'rest_framework.filters.OrderingFilter',
     ),
 }
@@ -193,4 +184,11 @@ SPECTACULAR_SETTINGS = {
         'persistAuthorization': True,
         'displayRequestDuration': True,
     },
+    'TAGS': [
+        {"name": "auth",     "description": "Registration, login, logout, token debug"},
+        {"name": "ads",      "description": "Ads catalog, images, availability, filters"},
+        {"name": "bookings", "description": "Booking workflow: create/confirm/reject/cancel"},
+        {"name": "reviews",  "description": "Tenant reviews for ads"},
+        {"name": "search",   "description": "Aggregated search stats"},
+    ],
 }

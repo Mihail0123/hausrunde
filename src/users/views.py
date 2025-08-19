@@ -2,17 +2,54 @@ from datetime import datetime, timezone
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework import viewsets, permissions, status
+from rest_framework import serializers as rf_serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.utils.timezone import now
 from django.contrib.auth import authenticate
+from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes, extend_schema_view
 
 from .models import CustomUser
 from .serializers import CustomUserSerializer, RegistrationSerializer, LoginSerializer
 
+class PublicUserSerializer(rf_serializers.Serializer):
+    id = rf_serializers.IntegerField()
+    email = rf_serializers.EmailField()
+    first_name = rf_serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    last_name = rf_serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    phone_number = rf_serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
+class RegisterResponseSerializer(rf_serializers.Serializer):
+    detail = rf_serializers.CharField()
+    user = PublicUserSerializer()
+
+class LoginResponseSerializer(rf_serializers.Serializer):
+    detail = rf_serializers.CharField()
+
+class SimpleDetailSerializer(rf_serializers.Serializer):
+    detail = rf_serializers.CharField()
+
+class DebugTokenPayloadSerializer(rf_serializers.Serializer):
+    has_access = rf_serializers.BooleanField()
+    access_expires_in_sec = rf_serializers.IntegerField(allow_null=True)
+    access_valid = rf_serializers.BooleanField()
+    has_refresh = rf_serializers.BooleanField()
+    refresh_expires_in_sec = rf_serializers.IntegerField(allow_null=True)
+    refresh_valid = rf_serializers.BooleanField()
+
+@extend_schema(
+    summary="Register & set auth cookies",
+    request=RegistrationSerializer,
+    responses={
+        201: OpenApiResponse(
+            response=RegisterResponseSerializer,
+            description="Account created; JWT tokens are set as httpOnly cookies."
+        ),
+        400: OpenApiResponse(description="Validation error")},
+    tags=["auth"],
+)
 class RegisterView(CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [AllowAny]
@@ -58,20 +95,44 @@ class RegisterView(CreateAPIView):
         )
         return response
 
+
+@extend_schema(tags=["users"])
+@extend_schema_view(
+    list=extend_schema(summary="List users"),
+    retrieve=extend_schema(summary="Retrieve user"),
+    create=extend_schema(summary="Create user"),
+    update=extend_schema(summary="Update user"),
+    partial_update=extend_schema(summary="Partial update user"),
+    destroy=extend_schema(summary="Delete user"),
+)
 class CustomUserViewSet(viewsets.ModelViewSet):
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
     permission_classes = [IsAuthenticated]
 
 
+@extend_schema(tags=["auth"])
 class LoginView(APIView):
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
 
+    @extend_schema(
+        request=None,
+        responses={200: OpenApiResponse(response=LoginSerializer, description="Login form schema")},
+        auth=[],
+    )
     def get(self, request):
         serializer = self.serializer_class()
         return Response(serializer.data)
 
+    @extend_schema(
+        request=LoginSerializer,
+        responses={
+            200: OpenApiResponse(response=LoginResponseSerializer, description="Login successful; cookies set"),
+            401: OpenApiResponse(response=SimpleDetailSerializer, description="Invalid credentials"),
+        },
+        auth=[],
+    )
     def post(self, request, *args, **kwargs):
         serializer = self.serializer_class(data=request.data)
         serializer.is_valid(raise_exception=True)
@@ -109,6 +170,15 @@ class LoginView(APIView):
         return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
 
 
+@extend_schema(
+    summary="Logout",
+    request=None,
+    responses={
+        200: OpenApiResponse(response=SimpleDetailSerializer, description="Logged out"),
+        401: OpenApiResponse(description="Unauthorized"),
+    },
+    tags=["auth"],
+)
 class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -118,7 +188,13 @@ class LogoutView(APIView):
         response.delete_cookie('refresh_token', path='/')
         return response
 
-
+@extend_schema(
+    summary="Debug token payload",
+    request=None,
+    responses={200: OpenApiResponse(response=DebugTokenPayloadSerializer)},
+    auth=[],
+    tags=["auth"],
+)
 class DebugTokenView(APIView):
     """token info"""
     permission_classes = [AllowAny]

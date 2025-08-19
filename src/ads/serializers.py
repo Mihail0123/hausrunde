@@ -1,13 +1,14 @@
 from rest_framework import serializers
+from drf_spectacular.utils import extend_schema_field, OpenApiTypes
 from datetime import date
 
 from .models import Ad, Booking, AdImage, Review
 
 
 class AdImageSerializer(serializers.ModelSerializer):
-    # Абсолютный URL (с http://127.0.0.1:8000/...), если в контексте есть request
+    # Absolute URL (с http://127.0.0.1:8000/...), if request in context
     image_url = serializers.SerializerMethodField()
-    # Всегда относительный путь, начинающийся с /media/...
+    # Relative /media/...
     image_path = serializers.SerializerMethodField()
 
     class Meta:
@@ -15,17 +16,19 @@ class AdImageSerializer(serializers.ModelSerializer):
         fields = ["id", "image", "image_url", "image_path", "caption", "created_at"]
         read_only_fields = ["id", "created_at", "image_url", "image_path"]
 
-    def get_image_url(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_image_url(self, obj) -> str:
         try:
-            rel = obj.image.url  # '/media/...'
+            rel = obj.image.url
         except Exception:
             return ""
         request = self.context.get("request")
         return request.build_absolute_uri(rel) if request else rel
 
-    def get_image_path(self, obj):
+    @extend_schema_field(OpenApiTypes.STR)
+    def get_image_path(self, obj) -> str:
         try:
-            return obj.image.url  # '/media/...'
+            return obj.image.url
         except Exception:
             return ""
 

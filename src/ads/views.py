@@ -2,8 +2,9 @@ from django.db.models import Q, Avg, Count, Exists, OuterRef
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
-from rest_framework.exceptions import ValidationError, PermissionDenied
+from rest_framework.exceptions import ValidationError, PermissionDenied, MethodNotAllowed
 from rest_framework.response import Response
+from rest_framework import serializers as rf_serializers
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.views import APIView
 from drf_spectacular.utils import (
@@ -39,11 +40,13 @@ class AdFilter(df.FilterSet):
     housing_type = df.CharFilter(field_name='housing_type', lookup_expr='iexact', label='Housing type (exact)')
     area_min     = df.NumberFilter(field_name='area', lookup_expr='gte', label='Area min (m²)')
     area_max     = df.NumberFilter(field_name='area', lookup_expr='lte', label='Area max (m²)')
+    lat_min = df.NumberFilter(field_name='latitude', lookup_expr='gte', label='Latitude min')
+    lat_max = df.NumberFilter(field_name='latitude', lookup_expr='lte', label='Latitude max')
+    lon_min = df.NumberFilter(field_name='longitude', lookup_expr='gte', label='Longitude min')
+    lon_max = df.NumberFilter(field_name='longitude', lookup_expr='lte', label='Longitude max')
 
     q    = df.CharFilter(method='filter_q', label='Search')
     mine = df.BooleanFilter(method='filter_mine', label='Only my ads')
-
-    # New: availability window
     available_from = df.DateFilter(method='filter_available', label='Available from (YYYY-MM-DD)')
     available_to   = df.DateFilter(method='filter_available', label='Available to (YYYY-MM-DD)')
 
@@ -114,12 +117,14 @@ class AdFilter(df.FilterSet):
             'area_min', 'area_max',
             'mine',
             'available_from', 'available_to',
+            'lat_min', 'lat_max', 'lon_min', 'lon_max',
         ]
 
 
 # -------------------------
 # Ad ViewSet
 # -------------------------
+@extend_schema(tags=["ads"])
 @extend_schema_view(
     list=extend_schema(
         summary="List ads",
@@ -164,6 +169,30 @@ class AdFilter(df.FilterSet):
                 type=OpenApiTypes.STR,
                 description="Filter by location (icontains)",
                 examples=[OpenApiExample("City contains 'ber'", value="ber")]
+            ),
+            OpenApiParameter(
+                name="lat_min",
+                type=OpenApiTypes.NUMBER,
+                description="Minimum latitude (>=).",
+                examples=[OpenApiExample("South boundary", value=52.3)],
+            ),
+            OpenApiParameter(
+                name="lat_max",
+                type=OpenApiTypes.NUMBER,
+                description="Maximum latitude (<=).",
+                examples=[OpenApiExample("North boundary", value=52.7)],
+            ),
+            OpenApiParameter(
+                name="lon_min",
+                type=OpenApiTypes.NUMBER,
+                description="Minimum longitude (>=).",
+                examples=[OpenApiExample("West boundary", value=13.2)],
+            ),
+            OpenApiParameter(
+                name="lon_max",
+                type=OpenApiTypes.NUMBER,
+                description="Maximum longitude (<=).",
+                examples=[OpenApiExample("East boundary", value=13.6)],
             ),
             OpenApiParameter(
                 name="housing_type",
@@ -444,6 +473,7 @@ class AdViewSet(viewsets.ModelViewSet):
 # -------------------------
 # Review ViewSet
 # -------------------------
+@extend_schema(tags=["reviews"])
 @extend_schema_view(
     list=extend_schema(
         summary="List reviews",
@@ -566,6 +596,7 @@ def _compute_cancel_quote(booking):
 # -------------------------
 # AdImage ViewSet (edit/delete single image)
 # -------------------------
+@extend_schema(tags=["ads"])
 @extend_schema_view(
     list=extend_schema(
         summary="List ad images",
@@ -598,6 +629,10 @@ class AdImageViewSet(viewsets.ModelViewSet):
     http_method_names = ['get', 'patch', 'delete', 'post', 'head', 'options']
     filter_backends = (df.DjangoFilterBackend,)
     filterset_fields = ('ad',)
+
+    def create(self, request, *args, **kwargs):
+        # Disallow POST /api/ad-images/ (file upload happens via /api/ads/{id}/images/ and /ad-images/{id}/replace/)
+        raise MethodNotAllowed('POST')
 
     def get_serializer_class(self):
         # Use caption-only serializer for PATCH to avoid replacing the file
@@ -658,7 +693,7 @@ class AdImageViewSet(viewsets.ModelViewSet):
 # -------------------------
 # Booking ViewSet
 # -------------------------
-
+@extend_schema(tags=["bookings"])
 @extend_schema_view(
     list=extend_schema(
         summary="List my related bookings",
@@ -694,8 +729,6 @@ class AdImageViewSet(viewsets.ModelViewSet):
         }
     ),
 )
-
-
 class BookingViewSet(viewsets.ModelViewSet):
     """
     - list: show bookings for current user (as tenant OR as ad owner)
@@ -841,14 +874,27 @@ class BookingViewSet(viewsets.ModelViewSet):
 # -------------------------
 # Top search keywords
 # -------------------------
+
+class SearchTopItemSerializer(rf_serializers.Serializer):
+    q = rf_serializers.CharField()
+    count = rf_serializers.IntegerField()
+
+
 @extend_schema(
     summary="Top search keywords",
     description="Return most frequent non-empty `q` values.",
     parameters=[
-        OpenApiParameter(name="limit", type=OpenApiTypes.INT, description="Max items (default 10)",
-                         examples=[OpenApiExample("Top 5", value=5)])
+        OpenApiParameter(
+            name="limit",
+            type=OpenApiTypes.INT,
+            description="Max items (default 10, max 50)",
+            required=False,
+            examples=[OpenApiExample("Top 5", value=5)],
+        )
     ],
+    responses={200: OpenApiResponse(response=SearchTopItemSerializer(many=True))},
     auth=[],
+    tags=["search"],
 )
 class SearchHistoryTopView(APIView):
     permission_classes = [permissions.AllowAny]
