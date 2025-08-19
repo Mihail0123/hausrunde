@@ -6,6 +6,7 @@ from rest_framework import serializers as rf_serializers
 from rest_framework.response import Response
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
+from rest_framework_simplejwt.views import TokenObtainPairView
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
 from django.utils.timezone import now
@@ -15,6 +16,10 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes, 
 from .models import CustomUser
 from .serializers import CustomUserSerializer, RegistrationSerializer, LoginSerializer
 from src.users.throttling import AuthLoginThrottle
+
+class TokenObtainPairThrottleView(TokenObtainPairView):
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'auth_login'
 
 
 class PublicUserSerializer(rf_serializers.Serializer):

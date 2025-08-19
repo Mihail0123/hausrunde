@@ -10,6 +10,8 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 import os
+import sys
+
 from dotenv import load_dotenv
 from pathlib import Path
 from datetime import timedelta
@@ -53,6 +55,7 @@ INSTALLED_APPS = [
     'drf_spectacular',
     'drf_spectacular_sidecar',
     'django_filters',
+    'django_extensions',
 ]
 
 AUTH_USER_MODEL = 'users.CustomUser'
@@ -201,6 +204,11 @@ REST_FRAMEWORK = {
         'search_top': '30/min',
     },
 }
+
+if 'test' in sys.argv:
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['ads_list'] = '2/min'
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['ads_availability'] = '2/min'
+    REST_FRAMEWORK['DEFAULT_THROTTLE_RATES']['auth_login'] = '2/min'
 
 SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=180),
