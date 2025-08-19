@@ -14,6 +14,8 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse, OpenApiTypes, 
 
 from .models import CustomUser
 from .serializers import CustomUserSerializer, RegistrationSerializer, LoginSerializer
+from src.users.throttling import AuthLoginThrottle
+
 
 class PublicUserSerializer(rf_serializers.Serializer):
     id = rf_serializers.IntegerField()
@@ -118,8 +120,6 @@ class CustomUserViewSet(viewsets.ModelViewSet):
 class LoginView(APIView):
     permission_classes = [AllowAny]
     serializer_class = LoginSerializer
-
-    # Throttle only POST attempts
     throttle_classes = (ScopedRateThrottle,)
 
     def get_throttles(self):

@@ -28,6 +28,10 @@ from .permissions import (
 )
 from .pagination import AdPagination
 from .validators import validate_image_file
+from .throttling import (
+    AdsListThrottle, AdsRetrieveThrottle, AdsAvailabilityThrottle,
+    AdImageUploadThrottle, AdImageReplaceThrottle,
+)
 
 VIEW_DEDUP_HOURS = 6
 
@@ -310,7 +314,6 @@ class AdViewSet(viewsets.ModelViewSet):
     throttle_classes = (ScopedRateThrottle,)
 
     def get_throttles(self):
-        # Map actions to throttle scopes
         action = getattr(self, 'action', None)
         if action == 'list':
             self.throttle_scope = 'ads_list'
@@ -728,9 +731,7 @@ class AdImageViewSet(viewsets.ModelViewSet):
     throttle_classes = (ScopedRateThrottle,)
 
     def get_throttles(self):
-        # Only throttle the 'replace' action
-        self.throttle_scope = 'adimage_replace' if getattr(self, 'action', None) == 'replace' else None
-        return super().get_throttles()
+        return [AdImageReplaceThrottle()] if getattr(self, "action", None) == "replace" else []
 
     def create(self, request, *args, **kwargs):
         # Disallow POST /api/ad-images/ (file upload happens via /api/ads/{id}/images/ and /ad-images/{id}/replace/)
