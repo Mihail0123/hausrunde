@@ -3,15 +3,40 @@ from .models import Ad, Booking, AdImage, Review
 
 
 class AdImageSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = AdImage
-        fields = ["id", "image", "caption", "created_at"]
-        read_only_fields = ["id", "created_at"]
+    # Абсолютный URL (с http://127.0.0.1:8000/...), если в контексте есть request
+    image_url = serializers.SerializerMethodField()
+    # Всегда относительный путь, начинающийся с /media/...
+    image_path = serializers.SerializerMethodField()
 
-class AdImageUploadSerializer(serializers.ModelSerializer):
     class Meta:
         model = AdImage
-        fields = ["image", "caption"]
+        fields = ["id", "image", "image_url", "image_path", "caption", "created_at"]
+        read_only_fields = ["id", "created_at", "image_url", "image_path"]
+
+    def get_image_url(self, obj):
+        try:
+            rel = obj.image.url  # '/media/...'
+        except Exception:
+            return ""
+        request = self.context.get("request")
+        return request.build_absolute_uri(rel) if request else rel
+
+    def get_image_path(self, obj):
+        try:
+            return obj.image.url  # '/media/...'
+        except Exception:
+            return ""
+
+
+
+class AdImageUploadSerializer(serializers.Serializer):
+    """
+    Not ModelSerializer, to receive:
+      - single file to `image`
+      - multiple files to `images` (request.FILES.getlist)
+    """
+    image = serializers.ImageField(required=False, allow_null=True)
+    caption = serializers.CharField(required=False, allow_blank=True, allow_null=True)
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -60,10 +85,9 @@ class BookingSerializer(serializers.ModelSerializer):
         fields = ("id", "ad", "tenant", "date_from", "date_to", "status", "created_at")
         read_only_fields = ("id", "tenant", "status", "created_at")
 
+
 class AvailabilityItemSerializer(serializers.Serializer):
     """Public shape for busy date ranges."""
     date_from = serializers.DateField()
     date_to = serializers.DateField()
     status = serializers.ChoiceField(choices=Booking.STATUS_CHOICES)
-
-

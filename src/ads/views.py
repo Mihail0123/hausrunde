@@ -209,6 +209,11 @@ class AdViewSet(viewsets.ModelViewSet):
     ordering_fields = ('price', 'created_at', 'area', 'reviews_count', 'views_count')
     ordering = ('-created_at',)
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
+
     def get_queryset(self):
         # Only active ads; annotate rating and popularity counters.
         return (
@@ -284,6 +289,11 @@ class AdViewSet(viewsets.ModelViewSet):
             return AdImageUploadSerializer
         return super().get_serializer_class()
 
+    def get_serializer_context(self):
+        ctx = super().get_serializer_context()
+        ctx['request'] = self.request
+        return ctx
+
     @extend_schema(
         summary="Upload image(s) for an ad (owner only)",
         description=(
@@ -302,10 +312,13 @@ class AdViewSet(viewsets.ModelViewSet):
         # object-level permission (IsAdOwnerOrReadOnly)
         self.check_object_permissions(request, ad)
 
-        # validate form fields (caption, single image)
-        serializer = self.get_serializer(data=request.data)
+        # validate only known fields (caption + optional single "image")
+        payload = {"caption": request.data.get("caption", "")}
+        if "image" in request.FILES:
+            payload["image"] = request.FILES["image"]
+        serializer = self.get_serializer(data=payload)
         serializer.is_valid(raise_exception=True)
-        caption = serializer.validated_data.get("caption", "")
+        caption = serializer.validated_data.get("caption", request.data.get("caption", ""))
 
         # accept multiple files via `images` or a single one via validated `image`
         files = request.FILES.getlist("images")
@@ -515,6 +528,112 @@ def _compute_cancel_quote(booking):
         }
     ),
 )
+
+
+# -------------------------
+# AdImage ViewSet (edit/delete single image)
+# -------------------------
+@extend_schema_view(
+    list=extend_schema(
+        summary="List ad images",
+        parameters=[
+            OpenApiParameter(name="ad", type=OpenApiTypes.INT,
+                             description="Filter by ad id",
+                             examples=[OpenApiExample("For ad #1", value=1)]),
+        ],
+        auth=[],
+    ),
+    partial_update=extend_schema(
+        summary="Update image caption (ad owner only)",
+        examples=[OpenApiExample("Set caption", value={"caption": "Kitchen view"})],
+    ),
+    destroy=extend_schema(
+        summary="Delete image (ad owner only)",
+    ),
+)
+class AdImageViewSet(viewsets.ModelViewSet):
+    """
+    POST/CREATE отключен: загрузка идёт через /api/ads/{id}/images/.
+    Здесь доступны:
+      - GET /api/ad-images/?ad=ID — список картинок объявления
+      - PATCH /api/ad-images/{id}/ {"caption": "..."} — правка подписи (только владелец объявления)
+      - DELETE /api/ad-images/{id}/ — удалить (только владелец объявления)
+    """
+    queryset = AdImage.objects.select_related('ad').all()
+    serializer_class = AdImageSerializer
+    permission_classes = (permissions.IsAuthenticatedOrReadOnly,)
+    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+    filter_backends = (df.DjangoFilterBackend,)
+    filterset_fields = ('ad',)
+
+    def _is_owner(self, obj):
+        u = self.request.user
+        return bool(u and u.is_authenticated and (u.is_staff or getattr(obj.ad, "owner_id", None) == u.id))
+
+    def perform_update(self, serializer):
+        obj = self.get_object()
+        if not self._is_owner(obj):
+            raise PermissionDenied("Only the ad owner can update image metadata.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self._is_owner(instance):
+            raise PermissionDenied("Only the ad owner can delete images.")
+        instance.delete()
+
+
+# -------------------------
+# AdImage ViewSet (edit/delete single image)
+# -------------------------
+@extend_schema_view(
+    list=extend_schema(
+        summary="List ad images",
+        parameters=[
+            OpenApiParameter(name="ad", type=OpenApiTypes.INT,
+                             description="Filter by ad id",
+                             examples=[OpenApiExample("For ad #1", value=1)]),
+        ],
+        auth=[],
+    ),
+    partial_update=extend_schema(
+        summary="Update image caption (ad owner only)",
+        examples=[OpenApiExample("Set caption", value={"caption": "Kitchen view"})],
+    ),
+    destroy=extend_schema(
+        summary="Delete image (ad owner only)",
+    ),
+)
+class AdImageViewSet(viewsets.ModelViewSet):
+    """
+    POST/CREATE отключен: загрузка идёт через /api/ads/{id}/images/.
+    Здесь доступны:
+      - GET /api/ad-images/?ad=ID — список картинок объявления
+      - PATCH /api/ad-images/{id}/ {"caption": "..."} — правка подписи (только владелец объявления)
+      - DELETE /api/ad-images/{id}/ — удалить (только владелец объявления)
+    """
+    queryset = AdImage.objects.select_related('ad').all()
+    serializer_class = AdImageSerializer
+    permission_classes = (permissions.IsAuthenticatedOrReadOnly,)
+    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+    filter_backends = (df.DjangoFilterBackend,)
+    filterset_fields = ('ad',)
+
+    def _is_owner(self, obj):
+        u = self.request.user
+        return bool(u and u.is_authenticated and (u.is_staff or getattr(obj.ad, "owner_id", None) == u.id))
+
+    def perform_update(self, serializer):
+        obj = self.get_object()
+        if not self._is_owner(obj):
+            raise PermissionDenied("Only the ad owner can update image metadata.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self._is_owner(instance):
+            raise PermissionDenied("Only the ad owner can delete images.")
+        instance.delete()
+
+
 class BookingViewSet(viewsets.ModelViewSet):
     """
     - list: show bookings for current user (as tenant OR as ad owner)

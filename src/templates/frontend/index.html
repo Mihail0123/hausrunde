@@ -4,12 +4,10 @@
   <meta charset="UTF-8" />
   <title>Hausrunde Test Frontend</title>
   <style>
-    body { font-family: Arial, sans-serif; background:#f5f5f5; margin:0; padding:24px;
-           display:flex; justify-content:center; }
-    .container { width: 100%; max-width: 980px; background:#fff; border-radius:14px; padding:24px;
-                 box-shadow:0 8px 24px rgba(0,0,0,.08); }
+    body { font-family: Arial, sans-serif; background:#f5f5f5; margin:0; padding:24px; display:flex; justify-content:center; }
+    .container { width: 100%; max-width: 980px; background:#fff; border-radius:14px; padding:24px; box-shadow:0 8px 24px rgba(0,0,0,.08); }
     h1, h2 { text-align:center; margin:0 0 16px; }
-    .row { display:flex; gap:10px; flex-wrap:wrap; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
     input, select, button, textarea { padding:8px 10px; border:1px solid #ccc; border-radius:8px; }
     button { cursor:pointer; }
     .btn { background:#111; color:#fff; }
@@ -35,6 +33,13 @@
       .grid-3 { grid-template-columns: 1fr 1fr 1fr; }
     }
     .rating { font-size:13px; }
+    /* gallery thumbs */
+    .thumb { display:inline-flex; flex-direction:column; align-items:center; gap:4px; margin-right:8px; }
+    .thumb img { height:120px; border-radius:8px; border:1px solid #eee; display:block; }
+    .thumb a { font-size:12px; text-decoration:none; }
+    .broken { color:#b30000; font-size:12px; }
+    .scroll-x { overflow:auto; white-space:nowrap; padding:6px 0; }
+    .owner-box label { font-size:12px; color:#666; display:block; margin-bottom:4px; }
   </style>
 </head>
 <body>
@@ -69,14 +74,11 @@
     <button class="tab" data-tab="tab-bookings">My Bookings</button>
   </div>
 
-  <!-- ADS (public with filters + create) -->
+  <!-- ADS -->
   <section id="tab-ads" class="section active">
     <h2>Ads</h2>
-
-    <!-- Top searches -->
     <div id="topSearches" class="row" style="margin:8px 0 14px; display:none;"></div>
 
-    <!-- Filters -->
     <form id="adsFilter" class="grid grid-3">
       <input name="q" placeholder="Search (q)">
       <input name="location" placeholder="Location">
@@ -199,7 +201,7 @@
       <button type="button" class="btn-outline" id="adClose">Close</button>
     </div>
     <div id="adMeta" class="muted" style="margin:6px 0 12px;"></div>
-    <div id="adGallery" class="row" style="gap:8px; overflow:auto;"></div>
+    <div id="adGallery" class="row scroll-x" style="gap:8px;"></div>
     <div id="adDesc" class="muted" style="margin:12px 0;"></div>
     <div class="row" style="justify-content:flex-end; gap:8px; margin-top:10px;">
       <button class="btn-outline" id="adReviewsBtn">Reviews</button>
@@ -223,6 +225,10 @@
   function setAuthStatus(txt){ document.getElementById('authStatus').textContent = txt || ''; }
   function fmtAvg(x){ var n = Number(x); return isFinite(n) ? n.toFixed(1) : '—'; }
   function emailsEqual(a, b){ return !!a && !!b && String(a).toLowerCase() === String(b).toLowerCase(); }
+  function normalizeUrl(raw){
+    if(!raw) return '';
+    try { return new URL(raw, location.origin).toString(); } catch(e){ return String(raw); }
+  }
 
   // tabs
   Array.prototype.forEach.call(document.querySelectorAll('.tab'), function(b){
@@ -239,27 +245,20 @@
     var email = document.getElementById('email').value.trim();
     var password = document.getElementById('password').value;
     var res = await fetch(API + "/token/", {
-      method:'POST',
-      headers:{'Content-Type':'application/json'},
+      method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ email: email, password: password })
     });
     if(res.ok){
       var data = await res.json();
-      access = data.access;
-      currentEmail = email;
+      access = data.access; currentEmail = email;
       setAuthStatus('✅ Logged in as ' + email);
       showTabs(true);
-      loadTopSearches();
-      loadAds(); loadMyAds(); loadBookings();
-    } else {
-      setAuthStatus('❌ Login failed');
-    }
+      loadTopSearches(); loadAds(); loadMyAds(); loadBookings();
+    } else { setAuthStatus('❌ Login failed'); }
   });
 
   document.getElementById('logoutBtn').addEventListener('click', function(){
-    access = null; currentEmail = null;
-    setAuthStatus('Logged out');
-    showTabs(false);
+    access = null; currentEmail = null; setAuthStatus('Logged out'); showTabs(false);
   });
 
   // REGISTER
@@ -267,20 +266,13 @@
     e.preventDefault();
     var fd = new FormData(e.target);
     var payload = Object.fromEntries(fd.entries());
-
     var res = await fetch(API + "/users/register/", {
-      method:'POST',
-      headers:{ 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
+      method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload)
     });
-
     var msg = document.getElementById('registerMsg');
-    if(res.ok){
-      msg.textContent = "✅ Registration successful! You can login now.";
-      e.target.reset();
-    } else {
-      var err = {};
-      try { err = await res.json(); } catch(e){}
+    if(res.ok){ msg.textContent = "✅ Registration successful! You can login now."; e.target.reset(); }
+    else {
+      var err = {}; try { err = await res.json(); } catch(e){}
       msg.textContent = "❌ Failed: " + (err.detail || JSON.stringify(err));
     }
   });
@@ -290,7 +282,7 @@
     var box = document.getElementById('topSearches');
     var res = await fetch(API + "/search-history/top/?limit=10");
     if(!res.ok){ box.style.display='none'; return; }
-    var items = await res.json(); // [{q:'', count:n}]
+    var items = await res.json();
     if(!items.length){ box.style.display='none'; return; }
     box.style.display='flex';
     box.innerHTML = '<span class="muted">Top searches:</span>' +
@@ -300,8 +292,7 @@
         var q = ch.getAttribute('data-q') === '(empty)' ? '' : ch.getAttribute('data-q');
         var f = document.getElementById('adsFilter');
         f.q.value = q || '';
-        adsPage = 1;
-        loadAds();
+        adsPage = 1; loadAds();
       });
     });
   }
@@ -313,8 +304,7 @@
   async function loadAds(paramsStr){
     var filterForm = document.getElementById('adsFilter');
     var fd = new FormData(filterForm);
-    if(paramsStr){ /* external */ }
-    else { fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
+    if(!paramsStr){ fd.set('page', String(adsPage)); paramsStr = enc(Object.fromEntries(fd)); }
     var res = await fetch(API + "/ads/?" + paramsStr, { headers: hAuth() });
     if(!res.ok){ adsList.innerHTML = '<div class="center muted">Error ' + res.status + '</div>'; return; }
     var data = await res.json();
@@ -325,22 +315,16 @@
   function renderAds(items){
     if(!items.length){ adsList.innerHTML = '<div class="center muted">No ads found.</div>'; return; }
     adsList.innerHTML = items.map(function(ad){
-      var own = emailsEqual(currentEmail, ad.owner); // если owner не придёт — own=false
+      var own = emailsEqual(currentEmail, ad.owner);
       return '\
       <div class="card ad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
         <div class="row" style="justify-content:space-between; align-items:flex-start">\
           <div>\
             <div><b>'+ esc(ad.title) +'</b></div>\
             <div class="muted">'+ esc(ad.location) +' · '+ ad.rooms +' rooms · '+ esc(ad.housing_type||'') +'</div>\
-            <div class="rating">⭐ '+ fmtAvg(ad.average_rating) +'\
-              · 👁 '+ Number(ad.views_count || 0) +'\
-              · 💬 '+ Number(ad.reviews_count || 0) +'\
-            </div>\
+            <div class="rating">⭐ '+ fmtAvg(ad.average_rating) +' · 👁 '+ Number(ad.views_count || 0) +' · 💬 '+ Number(ad.reviews_count || 0) +'</div>\
           </div>\
-          <div class="right">\
-            <div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div>\
-            <div class="muted">ID: '+ ad.id +'</div>\
-          </div>\
+          <div class="right"><div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div><div class="muted">ID: '+ ad.id +'</div></div>\
         </div>\
         <div class="muted" style="margin-top:6px">'+ esc(ad.description||'') +'</div>\
         <div class="row" style="justify-content:flex-end; margin-top:8px">\
@@ -352,10 +336,7 @@
 
     // Card -> details
     Array.prototype.forEach.call(adsList.querySelectorAll('.ad-card'), function(card){
-      card.addEventListener('click', function(){
-        var id = Number(card.getAttribute('data-ad'));
-        openAdModal(id);
-      });
+      card.addEventListener('click', function(){ openAdModal(Number(card.getAttribute('data-ad'))); });
     });
 
     // Book handlers
@@ -370,9 +351,7 @@
 
     // Reviews handlers
     Array.prototype.forEach.call(adsList.querySelectorAll('button[data-action="reviews"]'), function(btn){
-      btn.addEventListener('click', function(){
-        openReviewsModal(Number(btn.getAttribute('data-ad')));
-      });
+      btn.addEventListener('click', function(){ openReviewsModal(Number(btn.getAttribute('data-ad'))); });
     });
   }
 
@@ -391,12 +370,8 @@
     if(next){ next.addEventListener('click', function(){ adsPage=adsPage+1; loadAds(); }); }
   }
 
-  document.getElementById('adsFilter').addEventListener('submit', function(e){
-    e.preventDefault(); adsPage=1; loadAds();
-  });
-  document.getElementById('resetAds').addEventListener('click', function(){
-    document.getElementById('adsFilter').reset(); adsPage=1; loadAds();
-  });
+  document.getElementById('adsFilter').addEventListener('submit', function(e){ e.preventDefault(); adsPage=1; loadAds(); });
+  document.getElementById('resetAds').addEventListener('click', function(){ document.getElementById('adsFilter').reset(); adsPage=1; loadAds(); });
 
   // ======== CREATE AD ========
   document.getElementById('adCreate').addEventListener('submit', async function(e){
@@ -408,8 +383,7 @@
     payload.rooms = payload.rooms ? Number(payload.rooms) : null;
     payload.is_active = !!fd.get('is_active');
     var res = await fetch(API + "/ads/", {
-      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}),
-      body: JSON.stringify(payload)
+      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}), body: JSON.stringify(payload)
     });
     var msg = document.getElementById('adCreateMsg');
     if(res.ok){ msg.textContent='✅ Ad created'; e.target.reset(); loadAds(); loadMyAds(); }
@@ -431,20 +405,13 @@
       <div class="card myad-card" data-ad="'+ ad.id +'" style="cursor:pointer;">\
         <div class="row" style="justify-content:space-between">\
           <div><b>'+ esc(ad.title) +'</b><div class="muted">'+ esc(ad.location) +'</div></div>\
-          <div class="right">\
-            <div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div>\
-            <div class="muted">ID: '+ ad.id +'</div>\
-          </div>\
+          <div class="right"><div style="font-weight:700">€'+ Number(ad.price).toLocaleString() +'</div><div class="muted">ID: '+ ad.id +'</div></div>\
         </div>\
       </div>';
     }).join('');
 
-    // клик по моей карточке -> модалка объявления
     Array.prototype.forEach.call(box.querySelectorAll('.myad-card'), function(card){
-      card.addEventListener('click', function(){
-        var id = Number(card.getAttribute('data-ad'));
-        openAdModal(id);
-      });
+      card.addEventListener('click', function(){ openAdModal(Number(card.getAttribute('data-ad'))); });
     });
   }
 
@@ -457,7 +424,6 @@
     var list = await res.json();
     if(!list.length){ box.textContent='No bookings yet.'; return; }
 
-    // owners cache
     var adOwnersCache = {};
     async function getAdOwner(adId){
       if(adOwnersCache[adId]) return adOwnersCache[adId];
@@ -495,55 +461,40 @@
       box.appendChild(el);
     }
 
-    // handlers
     Array.prototype.forEach.call(box.querySelectorAll('button[data-act]'), function(btn){
-  btn.addEventListener('click', async function(){
-    var id  = btn.getAttribute('data-id');
-    var act = btn.getAttribute('data-act');
+      btn.addEventListener('click', async function(){
+        var id  = btn.getAttribute('data-id');
+        var act = btn.getAttribute('data-act');
 
-    if (act === 'cancel') {
-      try {
-        // 1) get quote
-        var q = await fetch(API + "/bookings/" + id + "/cancel-quote/", { headers: hAuth() });
-        if (!q.ok) { alert('Failed to get cancellation quote'); return; }
-        var quote = await q.json();
+        if (act === 'cancel') {
+          try {
+            var q = await fetch(API + "/bookings/" + id + "/cancel-quote/", { headers: hAuth() });
+            if (!q.ok) { alert('Failed to get cancellation quote'); return; }
+            var quote = await q.json();
+            var pct   = (typeof quote.fee_percent === 'number') ? quote.fee_percent.toFixed(0) : '0';
+            var amt   = (typeof quote.fee_amount  === 'number') ? quote.fee_amount.toFixed(2)  : '0.00';
+            var total = (typeof quote.total_cost  === 'number') ? quote.total_cost.toFixed(2)  : '0.00';
+            var msg = (quote.message || '')
+              + "\n\nTotal cost: €" + total
+              + "\nCancellation fee: €" + amt + " (" + pct + "%)."
+              + "\n\nConfirm cancellation?";
+            if (!confirm(msg)) return;
 
-        // 2) build message
-        var pct   = (typeof quote.fee_percent === 'number') ? quote.fee_percent.toFixed(0) : '0';
-        var amt   = (typeof quote.fee_amount  === 'number') ? quote.fee_amount.toFixed(2)  : '0.00';
-        var total = (typeof quote.total_cost  === 'number') ? quote.total_cost.toFixed(2)  : '0.00';
-
-        var msg = (quote.message || '')
-          + "\n\nTotal cost: €" + total
-          + "\nCancellation fee: €" + amt + " (" + pct + "%)."
-          + "\n\nConfirm cancellation?";
-
-        // 3) confirm
-        if (!confirm(msg)) return;
-
-        // 4) cancel
-        var r = await fetch(API + "/bookings/" + id + "/cancel/", { method: 'POST', headers: hAuth() });
-        if (!r.ok) {
-          var err = {};
-          try { err = await r.json(); } catch(e){}
-          alert('Cancel failed: ' + (err.detail || r.status));
-          return;
+            var r = await fetch(API + "/bookings/" + id + "/cancel/", { method: 'POST', headers: hAuth() });
+            if (!r.ok) {
+              var err = {}; try { err = await r.json(); } catch(e){}
+              alert('Cancel failed: ' + (err.detail || r.status));
+              return;
+            }
+            alert('Booking cancelled.'); await loadBookings(); return;
+          } catch (_) { alert('Cancel failed.'); return; }
         }
-        alert('Booking cancelled.');
-        await loadBookings();
-        return;
-      } catch (e) {
-        alert('Cancel failed.');
-        return;
-      }
-    }
 
-    // default for confirm/reject
-    var r2 = await fetch(API + "/bookings/" + id + "/" + act + "/", { method: 'POST', headers: hAuth() });
-    if (!r2.ok) alert('Action failed (' + act + ')');
-    await loadBookings();
-  });
-});
+        var r2 = await fetch(API + "/bookings/" + id + "/" + act + "/", { method: 'POST', headers: hAuth() });
+        if (!r2.ok) alert('Action failed (' + act + ')');
+        await loadBookings();
+      });
+    });
   }
 
   // Create booking (form)
@@ -555,8 +506,7 @@
     var fd = new FormData(e.target);
     var payload = Object.fromEntries(fd.entries());
     var res = await fetch(API + "/bookings/", {
-      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}),
-      body: JSON.stringify(payload)
+      method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}), body: JSON.stringify(payload)
     });
     var msg = document.getElementById('bookMsg');
     if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(function(){ bookModal.close(); loadBookings(); }, 600); }
@@ -577,15 +527,14 @@
     reviewsList.innerHTML = 'Loading…';
     reviewsModal.showModal();
 
-    // Показывать форму только если залогинен и это НЕ моё объявление
+    // form only if logged in and not owner
     let showForm = !!access;
     if (showForm) {
       try {
         const r = await fetch(`${API}/ads/${adId}/`);
         if (r.ok) {
           const ad = await r.json();
-          const isOwner = currentEmail && ad.owner &&
-            currentEmail.toLowerCase() === String(ad.owner).toLowerCase();
+          const isOwner = currentEmail && ad.owner && currentEmail.toLowerCase() === String(ad.owner).toLowerCase();
           showForm = !isOwner;
         }
       } catch(_) {}
@@ -614,7 +563,6 @@
     `;
   }
 
-  // ВАЖНО: предотвращаем перезагрузку страницы при отправке формы
   reviewForm.addEventListener('submit', async (e)=>{
     e.preventDefault();
     if(!access){ alert('Login required'); return; }
@@ -623,9 +571,7 @@
     payload.rating = Number(payload.rating);
 
     const res = await fetch(`${API}/reviews/`, {
-      method:'POST',
-      headers:{ ...hAuth(), 'Content-Type':'application/json' },
-      body: JSON.stringify(payload)
+      method:'POST', headers:{ ...hAuth(), 'Content-Type':'application/json' }, body: JSON.stringify(payload)
     });
 
     if(res.ok){
@@ -633,11 +579,9 @@
       reviewForm.reset();
       await loadReviews(document.getElementById('reviewAdId').value);
     } else {
-      let err = {};
-      try { err = await res.json(); } catch {}
+      let err = {}; try { err = await res.json(); } catch {}
       reviewMsg.textContent = '❌ ' + (err.detail || (err.non_field_errors && err.non_field_errors[0]) || JSON.stringify(err));
       if (res.status === 401) {
-        // токен истёк — просим перелогиниться
         access = null; currentEmail = null; showTabs(false);
         setAuthStatus('Session expired — please login again.');
       }
@@ -657,7 +601,6 @@
   adClose.addEventListener('click', function(){ adModal.close(); });
 
   async function openAdModal(adId){
-    // GET /api/ads/{id}/ — backend создаст AdView с дедупом 6h
     var res = await fetch(API + "/ads/" + adId + "/");
     if(!res.ok){ alert('Failed to load ad'); return; }
     var ad = await res.json();
@@ -677,7 +620,15 @@
 
     if(Array.isArray(ad.images) && ad.images.length){
       adGallery.innerHTML = ad.images.map(function(img){
-        return '<img src="' + img.image + '" alt="' + esc(img.caption||'') + '" style="height:120px; border-radius:8px; border:1px solid #eee;">';
+        var raw = img.image_path || img.image || img.image_url || "";
+        var url = normalizeUrl(raw);
+        var caption = esc(img.caption || '');
+        // рендерим превью, ссылку и индикатор ошибки
+        return '<div class="thumb">'
+          + '<img src="'+ esc(url) +'" alt="'+ caption +'" onerror="this.style.display=\'none\'; this.parentElement.querySelector(\'.broken\').style.display=\'inline\';" />'
+          + '<a href="'+ esc(url) +'" target="_blank" rel="noopener">open</a>'
+          + '<span class="broken" style="display:none;">(broken)</span>'
+          + '</div>';
       }).join('');
     } else {
       adGallery.innerHTML = '<div class="muted">No images.</div>';
@@ -685,7 +636,6 @@
 
     var isOwner = emailsEqual(currentEmail, ad.owner);
 
-    // "Book": скрыть, если это моё объявление
     adBookBtn.style.display = isOwner ? 'none' : 'inline-block';
     adBookBtn.onclick = function(e){
       e.preventDefault();
@@ -695,11 +645,7 @@
       bookModal.showModal();
     };
 
-    // "Reviews": список всегда; форма только если не владелец
-    adReviewsBtn.onclick = function(e){
-      e.preventDefault();
-      openReviewsModal(adId, { isOwner: isOwner });
-    };
+    adReviewsBtn.onclick = function(e){ e.preventDefault(); openReviewsModal(adId); };
 
     adModal.showModal();
   }
