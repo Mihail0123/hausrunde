@@ -12,6 +12,7 @@
     button { cursor:pointer; }
     .btn { background:#111; color:#fff; }
     .btn-outline { background:#fff; border:1px solid #111; }
+    .danger { background:#b00020; color:#fff; }
     .tabs { display:flex; justify-content:center; gap:8px; margin:16px 0; }
     .tab { background:#eee; border:none; padding:8px 14px; border-radius:999px; }
     .tab.active { background:#111; color:#fff; }
@@ -34,12 +35,15 @@
     }
     .rating { font-size:13px; }
     /* gallery thumbs */
-    .thumb { display:inline-flex; flex-direction:column; align-items:center; gap:4px; margin-right:8px; }
-    .thumb img { height:120px; border-radius:8px; border:1px solid #eee; display:block; }
+    .thumb { display:inline-flex; flex-direction:column; align-items:center; gap:6px; margin-right:10px; padding:8px; border:1px solid #eee; border-radius:8px; background:#fafafa; }
+    .thumb img { height:120px; border-radius:6px; border:1px solid #eee; display:block; }
     .thumb a { font-size:12px; text-decoration:none; }
     .broken { color:#b30000; font-size:12px; }
     .scroll-x { overflow:auto; white-space:nowrap; padding:6px 0; }
     .owner-box label { font-size:12px; color:#666; display:block; margin-bottom:4px; }
+    .thumb-ctl { display:flex; gap:6px; align-items:center; }
+    .thumb-ctl input[type="text"] { min-width:180px; }
+    .note { font-size:12px; color:#444; }
   </style>
 </head>
 <body>
@@ -207,6 +211,9 @@
       <button class="btn-outline" id="adReviewsBtn">Reviews</button>
       <button class="btn" id="adBookBtn">Book</button>
     </div>
+    <div id="adOwnerNote" class="note" style="margin-top:8px; display:none;">
+      Disable ad blockers for <code>/media/</code> if previews don’t load in dev.
+    </div>
   </div>
 </dialog>
 
@@ -228,6 +235,16 @@
   function normalizeUrl(raw){
     if(!raw) return '';
     try { return new URL(raw, location.origin).toString(); } catch(e){ return String(raw); }
+  }
+  // Format date as DD/MM/YYYY (display only)
+  function fmtDMY(s){
+    if(!s) return '';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return String(s);
+    const dd = String(d.getDate()).padStart(2,'0');
+    const mm = String(d.getMonth()+1).padStart(2,'0');
+    const yy = String(d.getFullYear());
+    return `${dd}/${mm}/${yy}`;
   }
 
   // tabs
@@ -251,10 +268,10 @@
     if(res.ok){
       var data = await res.json();
       access = data.access; currentEmail = email;
-      setAuthStatus('✅ Logged in as ' + email);
+      setAuthStatus('Logged in as ' + email);
       showTabs(true);
       loadTopSearches(); loadAds(); loadMyAds(); loadBookings();
-    } else { setAuthStatus('❌ Login failed'); }
+    } else { setAuthStatus('Login failed'); }
   });
 
   document.getElementById('logoutBtn').addEventListener('click', function(){
@@ -270,10 +287,10 @@
       method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(payload)
     });
     var msg = document.getElementById('registerMsg');
-    if(res.ok){ msg.textContent = "✅ Registration successful! You can login now."; e.target.reset(); }
+    if(res.ok){ msg.textContent = "Registration successful. You can login now."; e.target.reset(); }
     else {
       var err = {}; try { err = await res.json(); } catch(e){}
-      msg.textContent = "❌ Failed: " + (err.detail || JSON.stringify(err));
+      msg.textContent = "Failed: " + (err.detail || JSON.stringify(err));
     }
   });
 
@@ -386,8 +403,11 @@
       method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}), body: JSON.stringify(payload)
     });
     var msg = document.getElementById('adCreateMsg');
-    if(res.ok){ msg.textContent='✅ Ad created'; e.target.reset(); loadAds(); loadMyAds(); }
-    else { msg.textContent='❌ Failed to create'; }
+    if(res.ok){ msg.textContent='Ad created'; e.target.reset(); loadAds(); loadMyAds(); }
+    else {
+      let err = {}; try { err = await res.json(); } catch {}
+      msg.textContent='Failed to create: ' + (err.detail || res.status);
+    }
   });
 
   // ======== MY ADS ========
@@ -447,7 +467,7 @@
         <div class="row" style="justify-content:space-between">\
           <div>\
             <div><b>Booking #'+ b.id +'</b> · <span class="pill">'+ esc(b.status) +'</span></div>\
-            <div class="muted">Ad: '+ b.ad +' · '+ esc(b.date_from) +' → '+ esc(b.date_to) +'</div>\
+            <div class="muted">Ad: '+ b.ad +' · '+ fmtDMY(b.date_from) +' → '+ fmtDMY(b.date_to) +'</div>\
             <div class="muted">Tenant: '+ esc(b.tenant || '') +' · Owner: '+ esc(ownerEmail || '') +'</div>\
           </div>\
           <div class="row">\
@@ -509,8 +529,11 @@
       method:'POST', headers:Object.assign({}, hAuth(), {'Content-Type':'application/json'}), body: JSON.stringify(payload)
     });
     var msg = document.getElementById('bookMsg');
-    if(res.ok){ msg.textContent='✅ Booking created'; setTimeout(function(){ bookModal.close(); loadBookings(); }, 600); }
-    else { msg.textContent='❌ Failed to create booking'; }
+    if(res.ok){ msg.textContent='Booking created'; setTimeout(function(){ bookModal.close(); loadBookings(); }, 600); }
+    else {
+      let err = {}; try { err = await res.json(); } catch {}
+      msg.textContent='Failed to create booking: ' + (err.detail || res.status);
+    }
   });
 
   // ======== REVIEWS ========
@@ -558,7 +581,7 @@
         <div class="card" style="margin:8px 0;">
           <div><b>${esc(r.tenant || '')}</b> · <span class="pill">${esc(r.rating)}/5</span></div>
           <div class="muted">${esc(r.text || '')}</div>
-          <div class="muted">${esc(r.created_at || '')}</div>
+          <div class="muted">${fmtDMY(r.created_at)}</div>
         </div>`).join('')}
     `;
   }
@@ -575,12 +598,12 @@
     });
 
     if(res.ok){
-      reviewMsg.textContent = '✅ Review added';
+      reviewMsg.textContent = 'Review added';
       reviewForm.reset();
       await loadReviews(document.getElementById('reviewAdId').value);
     } else {
       let err = {}; try { err = await res.json(); } catch {}
-      reviewMsg.textContent = '❌ ' + (err.detail || (err.non_field_errors && err.non_field_errors[0]) || JSON.stringify(err));
+      reviewMsg.textContent = 'Error: ' + (err.detail || (err.non_field_errors && err.non_field_errors[0]) || JSON.stringify(err));
       if (res.status === 401) {
         access = null; currentEmail = null; showTabs(false);
         setAuthStatus('Session expired — please login again.');
@@ -597,8 +620,12 @@
   const adGallery = document.getElementById('adGallery');
   const adBookBtn = document.getElementById('adBookBtn');
   const adReviewsBtn = document.getElementById('adReviewsBtn');
+  const adOwnerNote = document.getElementById('adOwnerNote');
 
   adClose.addEventListener('click', function(){ adModal.close(); });
+
+  // Container to host owner edit form (created lazily)
+  let adEditBox = null;
 
   async function openAdModal(adId){
     var res = await fetch(API + "/ads/" + adId + "/");
@@ -618,23 +645,11 @@
 
     adDesc.textContent = ad.description || '';
 
-    if(Array.isArray(ad.images) && ad.images.length){
-      adGallery.innerHTML = ad.images.map(function(img){
-        var raw = img.image_path || img.image || img.image_url || "";
-        var url = normalizeUrl(raw);
-        var caption = esc(img.caption || '');
-        // рендерим превью, ссылку и индикатор ошибки
-        return '<div class="thumb">'
-          + '<img src="'+ esc(url) +'" alt="'+ caption +'" onerror="this.style.display=\'none\'; this.parentElement.querySelector(\'.broken\').style.display=\'inline\';" />'
-          + '<a href="'+ esc(url) +'" target="_blank" rel="noopener">open</a>'
-          + '<span class="broken" style="display:none;">(broken)</span>'
-          + '</div>';
-      }).join('');
-    } else {
-      adGallery.innerHTML = '<div class="muted">No images.</div>';
-    }
+    // Render gallery with owner controls
+    renderGallery(ad);
 
     var isOwner = emailsEqual(currentEmail, ad.owner);
+    adOwnerNote.style.display = isOwner ? 'block' : 'none';
 
     adBookBtn.style.display = isOwner ? 'none' : 'inline-block';
     adBookBtn.onclick = function(e){
@@ -647,7 +662,307 @@
 
     adReviewsBtn.onclick = function(e){ e.preventDefault(); openReviewsModal(adId); };
 
+    // --- Owner edit toolbar (View/Edit/Activate/Delete) ---
+    let toolbar = adMeta.nextElementSibling && adMeta.nextElementSibling.classList && adMeta.nextElementSibling.classList.contains('owner-box')
+      ? adMeta.nextElementSibling
+      : null;
+
+    if (!toolbar) {
+      toolbar = document.createElement('div');
+      toolbar.className = 'owner-box row';
+      toolbar.style.justifyContent = 'space-between';
+      toolbar.style.gap = '8px';
+      adMeta.after(toolbar);
+    }
+    toolbar.innerHTML = '';
+
+    if (!adEditBox) {
+      adEditBox = document.createElement('div');
+      adEditBox.className = 'card';
+      adEditBox.style.marginTop = '10px';
+      adDesc.after(adEditBox);
+    }
+    adEditBox.innerHTML = '';
+
+    if (isOwner) {
+      // Left side: edit buttons
+      const left = document.createElement('div');
+      left.className = 'row';
+      left.style.gap = '8px';
+
+      const btnEdit = document.createElement('button');
+      btnEdit.className = 'btn-outline';
+      btnEdit.textContent = 'Edit';
+
+      const btnSave = document.createElement('button');
+      btnSave.className = 'btn';
+      btnSave.textContent = 'Save';
+      btnSave.style.display = 'none';
+
+      const btnCancel = document.createElement('button');
+      btnCancel.className = 'btn-outline';
+      btnCancel.textContent = 'Cancel';
+      btnCancel.style.display = 'none';
+
+      left.appendChild(btnEdit);
+      left.appendChild(btnSave);
+      left.appendChild(btnCancel);
+
+      // Right side: activate/deactivate and delete
+      const right = document.createElement('div');
+      right.className = 'row';
+      right.style.gap = '8px';
+
+      const btnToggle = document.createElement('button');
+      btnToggle.className = 'btn-outline';
+      btnToggle.textContent = ad.is_active ? 'Deactivate' : 'Activate';
+
+      const btnDelete = document.createElement('button');
+      btnDelete.className = 'danger';
+      btnDelete.textContent = 'Delete Ad';
+
+      right.appendChild(btnToggle);
+      right.appendChild(btnDelete);
+
+      toolbar.appendChild(left);
+      toolbar.appendChild(right);
+
+      let editing = false;
+
+      function renderEditForm(current){
+        adEditBox.innerHTML = `
+          <div class="grid grid-2">
+            <div>
+              <label class="muted">Title</label>
+              <input type="text" id="edit_title" value="${esc(current.title||'')}" />
+            </div>
+            <div>
+              <label class="muted">Location</label>
+              <input type="text" id="edit_location" value="${esc(current.location||'')}" />
+            </div>
+
+            <div style="grid-column:1 / -1">
+              <label class="muted">Description</label>
+              <textarea id="edit_description" rows="3">${esc(current.description||'')}</textarea>
+            </div>
+
+            <div>
+              <label class="muted">Price (€/day)</label>
+              <input type="number" id="edit_price" value="${Number(current.price)||0}" />
+            </div>
+            <div>
+              <label class="muted">Rooms</label>
+              <input type="number" id="edit_rooms" value="${Number(current.rooms)||0}" />
+            </div>
+
+            <div>
+              <label class="muted">Housing type</label>
+              <input type="text" id="edit_housing_type" value="${esc(current.housing_type||'')}" />
+            </div>
+            <div>
+              <label class="muted">Area (m²)</label>
+              <input type="number" step="0.01" id="edit_area" value="${current.area!=null? Number(current.area): ''}" />
+            </div>
+
+            <div class="row" style="align-items:center; gap:8px;">
+              <label class="muted"><input type="checkbox" id="edit_is_active" ${current.is_active ? 'checked' : ''} /> Active</label>
+              <span class="muted">ID: ${current.id}</span>
+            </div>
+          </div>
+        `;
+      }
+
+      btnEdit.addEventListener('click', function(){
+        if (!access) { alert('Login required'); return; }
+        editing = true;
+        btnEdit.style.display = 'none';
+        btnSave.style.display = 'inline-block';
+        btnCancel.style.display = 'inline-block';
+        renderEditForm(ad);
+      });
+
+      btnCancel.addEventListener('click', function(){
+        editing = false;
+        btnEdit.style.display = 'inline-block';
+        btnSave.style.display = 'none';
+        btnCancel.style.display = 'none';
+        adEditBox.innerHTML = '';
+      });
+
+      btnSave.addEventListener('click', async function(){
+        const payload = {
+          title:       document.getElementById('edit_title').value.trim(),
+          location:    document.getElementById('edit_location').value.trim(),
+          description: document.getElementById('edit_description').value,
+          price:       Number(document.getElementById('edit_price').value || 0),
+          rooms:       Number(document.getElementById('edit_rooms').value || 0),
+          housing_type:document.getElementById('edit_housing_type').value.trim(),
+          is_active:   !!document.getElementById('edit_is_active').checked
+        };
+        const areaRaw = document.getElementById('edit_area').value;
+        if (areaRaw !== '') payload.area = Number(areaRaw);
+
+        try {
+          const r = await fetch(`${API}/ads/${adId}/`, {
+            method:'PATCH',
+            headers: { ...hAuth(), 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+          });
+          if (!r.ok) {
+            let err = {}; try { err = await r.json(); } catch {}
+            alert('Save failed: ' + (err.detail || r.status));
+            return;
+          }
+          const fresh = await (await fetch(`${API}/ads/${adId}/`)).json();
+          ad = fresh; // update local
+          adTitle.textContent = ad.title || ('Ad #' + adId);
+          adMeta.innerHTML = ''
+            + '<span>' + esc(ad.location || '') + '</span>'
+            + ' · <span>' + (ad.rooms || 0) + ' rooms</span>'
+            + ' · <span>' + esc(ad.housing_type || '') + '</span>'
+            + ' · <b>€' + Number(ad.price).toLocaleString() + '</b>'
+            + '<br>'
+            + '<span class="rating">⭐ ' + fmtAvg(ad.average_rating) + '</span>'
+            + ' · <span>👁 ' + Number(ad.views_count || 0) + '</span>'
+            + ' · <span>💬 ' + Number(ad.reviews_count || 0) + '</span>';
+          adDesc.textContent = ad.description || '';
+          btnToggle.textContent = ad.is_active ? 'Deactivate' : 'Activate';
+          editing = false; btnSave.style.display='none'; btnCancel.style.display='none'; btnEdit.style.display='inline-block';
+          adEditBox.innerHTML = '';
+          // refresh lists that show cards
+          loadAds(); loadMyAds();
+        } catch(e){
+          alert('Save error');
+        }
+      });
+
+      btnToggle.addEventListener('click', async function(){
+        if (!access) { alert('Login required'); return; }
+        const desired = !ad.is_active;
+        const r = await fetch(`${API}/ads/${adId}/`, {
+          method:'PATCH',
+          headers: { ...hAuth(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ is_active: desired })
+        });
+        if (!r.ok){ let err={}; try{err=await r.json();}catch{}; alert('Failed: ' + (err.detail||r.status)); return; }
+        ad.is_active = desired;
+        btnToggle.textContent = ad.is_active ? 'Deactivate' : 'Activate';
+        loadAds(); loadMyAds();
+      });
+
+      btnDelete.addEventListener('click', async function(){
+        if (!access) { alert('Login required'); return; }
+        if (!confirm('Delete this ad permanently?')) return;
+        const r = await fetch(`${API}/ads/${adId}/`, { method:'DELETE', headers: { ...hAuth() }});
+        if (r.status === 204 || r.ok){
+          adModal.close();
+          loadAds(); loadMyAds();
+        } else {
+          let err={}; try{err=await r.json();}catch{}; alert('Delete failed: ' + (err.detail||r.status));
+        }
+      });
+    } else {
+      // Not owner -> clear edit box/toolbar
+      adEditBox.innerHTML = '';
+      toolbar.innerHTML = '';
+    }
+
     adModal.showModal();
+
+    // --- inner function to render gallery with owner controls ---
+    function renderGallery(currentAd){
+      if(Array.isArray(currentAd.images) && currentAd.images.length){
+        adGallery.innerHTML = currentAd.images.map(function(img){
+          const raw = img.image_path || img.image || img.image_url || "";
+          const url = normalizeUrl(raw);
+          const caption = String(img.caption || '');
+          const imgId = img.id;
+          const ownerCtrls = emailsEqual(currentEmail, currentAd.owner)
+            ? `
+              <div class="thumb-ctl">
+                <input type="text" value="${esc(caption)}" placeholder="Caption" data-cap="${imgId}" />
+                <button class="btn-outline" data-save="${imgId}">Save</button>
+              </div>
+              <div class="thumb-ctl">
+                <input type="file" accept="image/*" data-file="${imgId}" />
+                <button class="btn-outline" data-repl="${imgId}">Replace</button>
+                <button class="danger" data-del="${imgId}">Delete</button>
+              </div>
+            `
+            : '';
+          return `
+            <div class="thumb" data-id="${imgId}">
+              <img src="${esc(url)}" alt="${esc(caption)}"
+                   onerror="this.style.display='none'; this.parentElement.querySelector('.broken').style.display='inline';" />
+              <a href="${esc(url)}" target="_blank" rel="noopener">open</a>
+              <span class="broken" style="display:none;">(broken)</span>
+              ${ownerCtrls}
+            </div>
+          `;
+        }).join('');
+      } else {
+        adGallery.innerHTML = '<div class="muted">No images.</div>';
+      }
+
+      // Wire owner controls if any
+      if (emailsEqual(currentEmail, currentAd.owner)) {
+        // Save caption
+        Array.prototype.forEach.call(adGallery.querySelectorAll('button[data-save]'), function(btn){
+          btn.addEventListener('click', async function(){
+            if (!access) { alert('Login required'); return; }
+            const id = btn.getAttribute('data-save');
+            const input = adGallery.querySelector(`input[data-cap="${id}"]`);
+            const payload = { caption: input ? input.value : '' };
+            const r = await fetch(`${API}/ad-images/${id}/`, {
+              method:'PATCH',
+              headers: { ...hAuth(), 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            if (!r.ok){ let err={}; try{err=await r.json();}catch{}; alert('Update failed: ' + (err.detail||r.status)); return; }
+            // Refresh ad to get updated captions
+            const fresh = await (await fetch(`${API}/ads/${currentAd.id}/`)).json();
+            ad = fresh;
+            renderGallery(ad);
+          });
+        });
+
+        // Replace file
+        Array.prototype.forEach.call(adGallery.querySelectorAll('button[data-repl]'), function(btn){
+          btn.addEventListener('click', async function(){
+            if (!access) { alert('Login required'); return; }
+            const id = btn.getAttribute('data-repl');
+            const fileInput = adGallery.querySelector(`input[data-file="${id}"]`);
+            const file = fileInput && fileInput.files && fileInput.files[0];
+            if (!file){ alert('Choose a file first'); return; }
+            const capInput = adGallery.querySelector(`input[data-cap="${id}"]`);
+            const fd = new FormData();
+            fd.append('image', file);
+            if (capInput) fd.append('caption', capInput.value);
+            const r = await fetch(`${API}/ad-images/${id}/replace/`, {
+              method:'POST', headers: { ...hAuth() }, body: fd
+            });
+            if (!r.ok){ let err={}; try{err=await r.json();}catch{}; alert('Replace failed: ' + (err.detail||r.status)); return; }
+            const fresh = await (await fetch(`${API}/ads/${currentAd.id}/`)).json();
+            ad = fresh;
+            renderGallery(ad);
+          });
+        });
+
+        // Delete image
+        Array.prototype.forEach.call(adGallery.querySelectorAll('button[data-del]'), function(btn){
+          btn.addEventListener('click', async function(){
+            if (!access) { alert('Login required'); return; }
+            const id = btn.getAttribute('data-del');
+            if (!confirm('Delete this image?')) return;
+            const r = await fetch(`${API}/ad-images/${id}/`, { method:'DELETE', headers: { ...hAuth() }});
+            if (!r.ok){ let err={}; try{err=await r.json();}catch{}; alert('Delete failed: ' + (err.detail||r.status)); return; }
+            const fresh = await (await fetch(`${API}/ads/${currentAd.id}/`)).json();
+            ad = fresh;
+            renderGallery(ad);
+          });
+        });
+      }
+    }
   }
 
   // ======== INIT ========

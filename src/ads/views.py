@@ -587,28 +587,40 @@ class AdImageViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Only the ad owner can delete images.")
         instance.delete()
 
+    @extend_schema(
+        summary="Replace image file (owner only)",
+        description="Multipart: field `image` (required), optional `caption` to update together with file.",
+        request=None,
+        responses={200: OpenApiResponse(response=AdImageSerializer)},
+    )
+    @action(detail=True, methods=['post'], url_path='replace', parser_classes=[MultiPartParser])
+    def replace(self, request, pk=None):
+        """
+        Replace image file for an existing AdImage. Owner-only.
+        Expects multipart with field 'image'; optional 'caption'.
+        """
+        obj = self.get_object()
+        if not self._is_owner(obj):
+            raise PermissionDenied("Only the ad owner can replace images.")
 
-# -------------------------
-# AdImage ViewSet (edit/delete single image)
-# -------------------------
-@extend_schema_view(
-    list=extend_schema(
-        summary="List ad images",
-        parameters=[
-            OpenApiParameter(name="ad", type=OpenApiTypes.INT,
-                             description="Filter by ad id",
-                             examples=[OpenApiExample("For ad #1", value=1)]),
-        ],
-        auth=[],
-    ),
-    partial_update=extend_schema(
-        summary="Update image caption (ad owner only)",
-        examples=[OpenApiExample("Set caption", value={"caption": "Kitchen view"})],
-    ),
-    destroy=extend_schema(
-        summary="Delete image (ad owner only)",
-    ),
-)
+        file = request.FILES.get('image')
+        if not file:
+            return Response({"detail": "Provide file in 'image' field (multipart)."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        # replace file
+        obj.image = file
+
+        # optional caption update
+        caption = request.data.get('caption')
+        if caption is not None:
+            obj.caption = caption
+
+        obj.save(update_fields=['image', 'caption'] if caption is not None else ['image'])
+
+        # return fresh representation (with image_url/path computed)
+        return Response(AdImageSerializer(obj, context={'request': request}).data, status=status.HTTP_200_OK)
+
 
 
 class BookingViewSet(viewsets.ModelViewSet):
