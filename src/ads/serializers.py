@@ -85,6 +85,41 @@ class AdSerializer(serializers.ModelSerializer):
             "images", "average_rating", "reviews_count", "views_count",
         ]
 
+    # --- Server-side validation (non-negative numbers and lat/lon ranges) ---
+    def validate_price(self, value):
+        # Accept None; otherwise require non-negative
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Price must be >= 0.")
+        return value
+
+    def validate_rooms(self, value):
+        # Accept None; otherwise require non-negative integer
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Rooms must be >= 0.")
+        return value
+
+    def validate_area(self, value):
+        # Accept None; otherwise require non-negative
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Area must be >= 0.")
+        return value
+
+    def validate_latitude(self, value):
+        # Accept None; otherwise require -90..90
+        if value is not None:
+            v = float(value)
+            if not (-90.0 <= v <= 90.0):
+                raise serializers.ValidationError("Latitude must be between -90 and 90.")
+        return value
+
+    def validate_longitude(self, value):
+        # Accept None; otherwise require -180..180
+        if value is not None:
+            v = float(value)
+            if not (-180.0 <= v <= 180.0):
+                raise serializers.ValidationError("Longitude must be between -180 and 180.")
+        return value
+
 
 class BookingSerializer(serializers.ModelSerializer):
     tenant = serializers.StringRelatedField(read_only=True)

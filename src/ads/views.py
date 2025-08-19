@@ -1,4 +1,4 @@
-from django.db.models import Q, Avg, Count
+from django.db.models import Q, Avg, Count, Exists, OuterRef
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
@@ -11,6 +11,7 @@ from drf_spectacular.utils import (
     OpenApiExample, OpenApiResponse
 )
 from django.utils import timezone
+from django.utils.dateparse import parse_date
 from datetime import timedelta
 
 from .models import Ad, Booking, AdImage, Review, SearchQuery, AdView
@@ -42,6 +43,10 @@ class AdFilter(df.FilterSet):
     q    = df.CharFilter(method='filter_q', label='Search')
     mine = df.BooleanFilter(method='filter_mine', label='Only my ads')
 
+    # New: availability window
+    available_from = df.DateFilter(method='filter_available', label='Available from (YYYY-MM-DD)')
+    available_to   = df.DateFilter(method='filter_available', label='Available to (YYYY-MM-DD)')
+
     def filter_q(self, queryset, name, value):
         terms = [t.strip() for t in (value or "").split() if t.strip()]
         for term in terms:
@@ -60,6 +65,46 @@ class AdFilter(df.FilterSet):
             return queryset.filter(owner=req.user)
         return queryset
 
+    def _availability_range(self):
+        """
+        Read both params from query and parse to dates.
+        If only one is provided, treat it as a single-day window [d..d].
+        """
+        req = getattr(self, 'request', None)
+        if not req:
+            return None, None
+        s = req.query_params.get('available_from') or None
+        e = req.query_params.get('available_to') or None
+        d1 = parse_date(s) if s else None
+        d2 = parse_date(e) if e else None
+        if d1 and not d2:
+            d2 = d1
+        if d2 and not d1:
+            d1 = d2
+        return d1, d2
+
+    def filter_available(self, queryset, name, value):
+        """
+        Exclude ads having any PENDING/CONFIRMED booking overlapping the requested window.
+        Overlap condition: existing.date_from <= req_end AND existing.date_to >= req_start
+        """
+        # Prevent applying twice (method bound to two fields).
+        if getattr(self, '_availability_applied', False):
+            return queryset
+
+        start, end = self._availability_range()
+        if not start or not end:
+            return queryset
+
+        conflict = Booking.objects.filter(
+            ad=OuterRef('pk'),
+            status__in=[Booking.PENDING, Booking.CONFIRMED],
+            date_from__lte=end,
+            date_to__gte=start,
+        )
+        self._availability_applied = True
+        return queryset.exclude(Exists(conflict))
+
     class Meta:
         model = Ad
         fields = [
@@ -68,6 +113,7 @@ class AdFilter(df.FilterSet):
             'location', 'housing_type',
             'area_min', 'area_max',
             'mine',
+            'available_from', 'available_to',
         ]
 
 
@@ -126,6 +172,18 @@ class AdFilter(df.FilterSet):
                 examples=[OpenApiExample("Exact type", value="apartment")]
             ),
             OpenApiParameter(
+                name="available_from",
+                type=OpenApiTypes.DATE,
+                description="Exclude ads that have PENDING/CONFIRMED bookings overlapping this window start.",
+                examples=[OpenApiExample("From 2025-09-01", value="2025-09-01")],
+            ),
+            OpenApiParameter(
+                name="available_to",
+                type=OpenApiTypes.DATE,
+                description="Exclude ads that have PENDING/CONFIRMED bookings overlapping this window end.",
+                examples=[OpenApiExample("To 2025-09-10", value="2025-09-10")],
+            ),
+            OpenApiParameter(
                 name="ordering",
                 type=OpenApiTypes.STR,
                 description=(
@@ -163,7 +221,13 @@ class AdFilter(df.FilterSet):
                 "Example query (URL)",
                 description="q=berlin&price_min=600&rooms_min=2&ordering=price&page=1&page_size=20",
                 value=None,
-            )
+            ),
+            OpenApiExample(
+                "Filter by availability window",
+                description="q=berlin&available_from=2025-09-01&available_to=2025-09-10&page=1&page_size=20",
+                value=None,
+            ),
+
         ],
     ),
     retrieve=extend_schema(
@@ -500,46 +564,6 @@ def _compute_cancel_quote(booking):
 
 
 # -------------------------
-# Booking ViewSet
-# -------------------------
-@extend_schema_view(
-    list=extend_schema(
-        summary="List my related bookings",
-        description="Show bookings where you are either the tenant or the ad owner."
-    ),
-    retrieve=extend_schema(
-        summary="Retrieve booking",
-        description="Booking details visible only to tenant or ad owner."
-    ),
-    create=extend_schema(
-        summary="Create a booking request",
-        description=(
-            "Authenticated users only.\n\n"
-            "- Cannot book your own ad\n"
-            "- Cannot book inactive ads\n"
-            "- Dates must not overlap with existing confirmed/pending bookings"
-        ),
-        examples=[
-            OpenApiExample(
-                "Successful booking",
-                value={"ad": 1, "date_from": "2025-09-01", "date_to": "2025-09-10"}
-            ),
-            OpenApiExample(
-                "Overlap (will fail)",
-                value={"ad": 1, "date_from": "2025-09-05", "date_to": "2025-09-07"},
-                response_only=True
-            ),
-        ],
-        responses={
-            201: OpenApiResponse(response=BookingSerializer, description="Booking created"),
-            400: OpenApiResponse(description="Validation error"),
-            401: OpenApiResponse(description="Unauthorized"),
-        }
-    ),
-)
-
-
-# -------------------------
 # AdImage ViewSet (edit/delete single image)
 # -------------------------
 @extend_schema_view(
@@ -571,7 +595,7 @@ class AdImageViewSet(viewsets.ModelViewSet):
     queryset = AdImage.objects.select_related('ad').all()
     serializer_class = AdImageSerializer
     permission_classes = (permissions.IsAuthenticatedOrReadOnly,)
-    http_method_names = ['get', 'patch', 'delete', 'head', 'options']
+    http_method_names = ['get', 'patch', 'delete', 'post', 'head', 'options']
     filter_backends = (df.DjangoFilterBackend,)
     filterset_fields = ('ad',)
 
@@ -630,6 +654,46 @@ class AdImageViewSet(viewsets.ModelViewSet):
         # return fresh representation (with image_url/path computed)
         return Response(AdImageSerializer(obj, context={'request': request}).data, status=status.HTTP_200_OK)
 
+
+# -------------------------
+# Booking ViewSet
+# -------------------------
+
+@extend_schema_view(
+    list=extend_schema(
+        summary="List my related bookings",
+        description="Show bookings where you are either the tenant or the ad owner."
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve booking",
+        description="Booking details visible only to tenant or ad owner."
+    ),
+    create=extend_schema(
+        summary="Create a booking request",
+        description=(
+            "Authenticated users only.\n\n"
+            "- Cannot book your own ad\n"
+            "- Cannot book inactive ads\n"
+            "- Dates must not overlap with existing confirmed/pending bookings"
+        ),
+        examples=[
+            OpenApiExample(
+                "Successful booking",
+                value={"ad": 1, "date_from": "2025-09-01", "date_to": "2025-09-10"}
+            ),
+            OpenApiExample(
+                "Overlap (will fail)",
+                value={"ad": 1, "date_from": "2025-09-05", "date_to": "2025-09-07"},
+                response_only=True
+            ),
+        ],
+        responses={
+            201: OpenApiResponse(response=BookingSerializer, description="Booking created"),
+            400: OpenApiResponse(description="Validation error"),
+            401: OpenApiResponse(description="Unauthorized"),
+        }
+    ),
+)
 
 
 class BookingViewSet(viewsets.ModelViewSet):
