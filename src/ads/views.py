@@ -854,9 +854,11 @@ class BookingViewSet(viewsets.ModelViewSet):
     throttle_classes = (ScopedRateThrottle,)
 
     def get_throttles(self):
-        # Throttle mutating actions only
-        action = getattr(self, 'action', None)
-        self.throttle_scope = 'bookings_mutation' if action in ('create', 'confirm', 'reject', 'cancel') else None
+        if self.action in ('create', 'cancel', 'confirm', 'reject',
+                           'update', 'partial_update', 'destroy'):
+            self.throttle_scope = 'bookings_mutation'
+        else:
+            self.throttle_scope = None
         return super().get_throttles()
 
     def get_queryset(self):
@@ -1020,6 +1022,7 @@ class SearchHistoryTopView(APIView):
 
     # Throttle search-top endpoint
     throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = 'search_top'
 
     def get_throttles(self):
         self.throttle_scope = 'search_top'

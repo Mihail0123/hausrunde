@@ -189,6 +189,8 @@ REST_FRAMEWORK = {
         'adimage_replace': '10/min',
         'bookings_mutation': '30/hour',
         'auth_login': '10/min',
+        'auth_register': '10/hour',
+        'auth_debug': '60/min',
         'search_top': '30/min',
     },
 }

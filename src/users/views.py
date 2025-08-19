@@ -54,6 +54,8 @@ class DebugTokenPayloadSerializer(rf_serializers.Serializer):
 class RegisterView(CreateAPIView):
     serializer_class = RegistrationSerializer
     permission_classes = [AllowAny]
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = 'auth_register'
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -206,6 +208,8 @@ class LogoutView(APIView):
 class DebugTokenView(APIView):
     """token info"""
     permission_classes = [AllowAny]
+    throttle_classes = (ScopedRateThrottle,)
+    throttle_scope = 'auth_debug'
 
     def get(self, request):
         access_token = request.COOKIES.get('access_token')
