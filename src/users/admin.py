@@ -1,17 +1,13 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
+from django.contrib.auth.forms import ReadOnlyPasswordHashField
 from django import forms
-from django.utils.translation import gettext_lazy as _
 
 from .models import CustomUser
 
 
-# Register your models here.
-
 class CustomUserCreationForm(forms.ModelForm):
-    """
-    Form for creating a new user through admin interface with a password check
-    """
+    """Create user with password1/password2 (hash on save)."""
     password1 = forms.CharField(label='Password', widget=forms.PasswordInput)
     password2 = forms.CharField(label='Password confirmation', widget=forms.PasswordInput)
 
@@ -20,12 +16,11 @@ class CustomUserCreationForm(forms.ModelForm):
         fields = ('email', 'first_name', 'last_name', 'phone_number')
 
     def clean_password2(self):
-        password1 = self.cleaned_data.get('password1')
-        password2 = self.cleaned_data.get('password2')
-
-        if password1 and password2 and password1 != password2:
-            raise forms.ValidationError(_('Passwords do not match'))
-        return password2
+        p1 = self.cleaned_data.get('password1')
+        p2 = self.cleaned_data.get('password2')
+        if p1 and p2 and p1 != p2:
+            raise forms.ValidationError('Passwords do not match')
+        return p2
 
     def save(self, commit=True):
         user = super().save(commit=False)
@@ -36,51 +31,56 @@ class CustomUserCreationForm(forms.ModelForm):
 
 
 class CustomUserChangeForm(forms.ModelForm):
-    """
-    Form for updating a user through admin interface(password is unnecessary field)
-    """
-    password = forms.CharField(label='Password', widget=forms.PasswordInput, required=False)
+    """Edit user; password shown as hashed (read-only field)."""
+    password = ReadOnlyPasswordHashField(
+        label='Password',
+        help_text=(
+            "Raw passwords are not stored, so there is no way to see this user's password. "
+            "You can change the password using the “Change password” form."
+        ),
+    )
 
     class Meta:
         model = CustomUser
-        fields = '__all__'
+        fields = (
+            'email', 'first_name', 'last_name', 'phone_number',
+            'password', 'is_active', 'is_staff', 'is_superuser',
+            'groups', 'user_permissions',
+        )
 
     def clean_password(self):
-        return self.initial['password']
+        # keep the existing hashed password
+        return self.initial.get('password')
 
 
+@admin.register(CustomUser)
 class CustomUserAdmin(UserAdmin):
     add_form = CustomUserCreationForm
     form = CustomUserChangeForm
     model = CustomUser
 
-    list_display = ('email', 'first_name', 'last_name', 'phone_number', 'is_staff', 'is_active')
-    list_filter = ('is_staff', 'is_active')
+    list_display = ('id', 'email', 'first_name', 'last_name', 'phone_number', 'is_staff', 'is_active')
+    list_filter  = ('is_staff', 'is_active', 'is_superuser')
+    search_fields = ('email', 'first_name', 'last_name', 'phone_number')
+    ordering = ('-date_joined',) if hasattr(CustomUser, 'date_joined') else ('email',)
+
+    # if date_joined exists
+    _date_fields = ('last_login',) + (('date_joined',) if hasattr(CustomUser, 'date_joined') else tuple())
 
     fieldsets = (
         (None, {'fields': ('email', 'password')}),
         ('Personal info', {'fields': ('first_name', 'last_name', 'phone_number')}),
-        ('Permissions', {'fields': ('is_staff', 'is_active', 'is_superuser', 'groups', 'user_permissions')}),
-        ('Important dates', {'fields': ('last_login', 'date_joined')}),
+        ('Permissions', {'fields': ('is_active', 'is_staff', 'is_superuser', 'groups', 'user_permissions')}),
+        ('Important dates', {'fields': _date_fields}),
     )
-
     add_fieldsets = (
         (None, {
             'classes': ('wide',),
             'fields': (
-                'email',
-                'first_name',
-                'last_name',
-                'password1',
-                'password2',
-                'phone_number',
-                'is_staff',
-                'is_active'
+                'email', 'first_name', 'last_name', 'phone_number',
+                'password1', 'password2',
+                'is_staff', 'is_active', 'is_superuser', 'groups'
             ),
-         }),
+        }),
     )
-
-    search_fields = ('email', 'first_name', 'last_name')
-    ordering = ('email',)
-
-admin.site.register(CustomUser, CustomUserAdmin)
+    readonly_fields = _date_fields
