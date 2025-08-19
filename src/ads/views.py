@@ -761,7 +761,10 @@ class AdImageViewSet(viewsets.ModelViewSet):
         summary="Replace image file (owner only)",
         description="Multipart: field `image` (required), optional `caption` to update together with file.",
         request=None,
-        responses={200: OpenApiResponse(response=AdImageSerializer)},
+        responses={
+            200: OpenApiResponse(response=AdImageSerializer),
+            400: OpenApiResponse(description="Invalid image or missing file"),
+        },
     )
     @action(detail=True, methods=['post'], url_path='replace', parser_classes=[MultiPartParser])
     def replace(self, request, pk=None):
@@ -778,7 +781,12 @@ class AdImageViewSet(viewsets.ModelViewSet):
             return Response({"detail": "Provide file in 'image' field (multipart)."},
                             status=status.HTTP_400_BAD_REQUEST)
 
-        # replace file
+        # validate new file before saving
+        try:
+            validate_image_file(file)
+        except DjangoValidationError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        # save
         obj.image = file
 
         # optional caption update
