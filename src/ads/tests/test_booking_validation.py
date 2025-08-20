@@ -1,16 +1,16 @@
 from datetime import date, timedelta
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from src.ads.models import Ad, Booking
 from src.ads.serializers import BookingSerializer
 
-
 class BookingValidationTests(TestCase):
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(email="owner@example.com", password="x")
         self.tenant = User.objects.create_user(email="tenant@example.com", password="x")
+
         self.ad_active = Ad.objects.create(
             title="Active Ad",
             description="desc",
@@ -21,6 +21,7 @@ class BookingValidationTests(TestCase):
             is_active=True,
             owner=self.owner,
         )
+
         self.ad_inactive = Ad.objects.create(
             title="Inactive Ad",
             description="desc",
@@ -34,7 +35,8 @@ class BookingValidationTests(TestCase):
 
     def _ctx(self, user):
         class DummyReq:
-            def __init__(self, u): self.user = u
+            def __init__(self, u):
+                self.user = u
         return {"request": DummyReq(user)}
 
     def test_date_order_required(self):
@@ -73,7 +75,7 @@ class BookingValidationTests(TestCase):
         dt = df + timedelta(days=5)
         Booking.objects.create(
             ad=self.ad_active, tenant=self.tenant,
-            date_from=df, date_to=dt, status=Booking.CONFIRMED
+            date_from=df, date_to=dt, status=Booking.CONFIRMED,
         )
 
         # New booking overlapping existing
@@ -93,7 +95,7 @@ class BookingValidationTests(TestCase):
         dt = df + timedelta(days=5)
         Booking.objects.create(
             ad=self.ad_active, tenant=self.tenant,
-            date_from=df, date_to=dt, status=Booking.CONFIRMED
+            date_from=df, date_to=dt, status=Booking.CONFIRMED,
         )
 
         # New booking after the previous ends (no overlap)

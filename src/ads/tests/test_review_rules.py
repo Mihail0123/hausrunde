@@ -1,19 +1,16 @@
 from datetime import date, timedelta
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
-
 from src.ads.models import Ad, Booking
 
-
 class ReviewRulesTests(TestCase):
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(email="owner@example.com", password="x")
         self.tenant = User.objects.create_user(email="tenant@example.com", password="x")
-        self.other  = User.objects.create_user(email="other@example.com",  password="x")
-
+        self.other = User.objects.create_user(email="other@example.com", password="x")
         self.ad = Ad.objects.create(
             title="Nice flat",
             description="desc",
@@ -24,7 +21,6 @@ class ReviewRulesTests(TestCase):
             is_active=True,
             owner=self.owner,
         )
-
         self.client = APIClient()
 
     def _login(self, who):

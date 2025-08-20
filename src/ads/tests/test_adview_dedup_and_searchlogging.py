@@ -1,14 +1,12 @@
 from datetime import timedelta
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from django.utils import timezone
 from rest_framework.test import APIClient
-
 from src.ads.models import Ad, AdView, SearchQuery
 
-
 class AdViewsAndSearchTests(TestCase):
+
     def setUp(self):
         User = get_user_model()
         self.user = User.objects.create_user(email="u@example.com", password="x")
@@ -35,7 +33,6 @@ class AdViewsAndSearchTests(TestCase):
     def test_view_dedup_authenticated_user(self):
         """Within 6h do not duplicate, after 6h+ create a new AdView (authenticated)."""
         self.client.force_authenticate(self.user)
-
         # First view -> 1 record
         r1 = self.client.get(f"/api/ads/{self.ad.id}/")
         self.assertEqual(r1.status_code, 200)
@@ -59,7 +56,6 @@ class AdViewsAndSearchTests(TestCase):
     def test_view_dedup_anonymous_by_ip(self):
         """Anonymous dedup by IP within 6h; after 6h+ create a new row."""
         headers = {"REMOTE_ADDR": "203.0.113.5", "HTTP_USER_AGENT": "pytest-UA"}
-
         # First anon view -> 1 record
         r1 = self.client.get(f"/api/ads/{self.ad.id}/", **headers)
         self.assertEqual(r1.status_code, 200)

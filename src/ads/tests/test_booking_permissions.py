@@ -1,25 +1,21 @@
 from datetime import date, timedelta
-
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
-
 from src.ads.models import Ad, Booking
 
-
 class BookingPermissionsTests(TestCase):
+
     def setUp(self):
         User = get_user_model()
         self.owner = User.objects.create_user(email="o@example.com", password="x")
         self.tenant = User.objects.create_user(email="t@example.com", password="x")
         self.other = User.objects.create_user(email="z@example.com", password="x")
-
         self.ad = Ad.objects.create(
             title="Ad", description="desc", location="Berlin",
             price=100, rooms=2, housing_type="apartment",
             is_active=True, owner=self.owner
         )
-
         self.client = APIClient()
 
     def _make_booking(self, tenant, status=Booking.PENDING, df=None, dt=None):

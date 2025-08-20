@@ -2,11 +2,9 @@ from datetime import date
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
-
 from src.ads.models import Ad, Booking
 
 User = get_user_model()
-
 
 class AdsAvailabilityFilterTests(TestCase):
     """Tests for ?available_from / ?available_to filter on /api/ads/."""
@@ -14,7 +12,6 @@ class AdsAvailabilityFilterTests(TestCase):
     def setUp(self):
         self.client = APIClient()
 
-        # Create users with email-only auth (no username field)
         self.owner = User.objects.create_user(
             email="owner@example.com", password="x"
         )

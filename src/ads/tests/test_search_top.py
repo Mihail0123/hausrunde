@@ -3,15 +3,18 @@ from rest_framework.test import APIClient
 from src.ads.models import SearchQuery
 
 class SearchTopTests(TestCase):
+
     def setUp(self):
         self.client = APIClient()
+
         # three 'berlin', two 'paris', one 'rome'
         for _ in range(3):
             SearchQuery.objects.create(q="berlin", filters={})
         for _ in range(2):
             SearchQuery.objects.create(q="paris", filters={})
         SearchQuery.objects.create(q="rome", filters={})
-        # empty q should be ignored by (exclude(q=''))
+
+    # empty q should be ignored by (exclude(q=''))
 
     def test_limit_and_order(self):
         r = self.client.get("/api/search/top/?limit=2")
@@ -19,7 +22,7 @@ class SearchTopTests(TestCase):
         items = r.json()
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0]["q"], "berlin")
-        self.assertEqual(items[0]["count"], 3)
+        self.assertEqual(items["count"], 3)
         self.assertEqual(items[1]["q"], "paris")
         self.assertEqual(items[1]["count"], 2)
 

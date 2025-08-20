@@ -6,10 +6,11 @@ from rest_framework.test import APIClient, APITestCase
 from src.ads.models import Ad, Booking
 
 class CancelQuoteTests(APITestCase):
+
     def setUp(self):
         User = get_user_model()
         self.tenant = User.objects.create_user(email="tenant@example.com", password="x")
-        self.owner  = User.objects.create_user(email="owner@example.com", password="x")
+        self.owner = User.objects.create_user(email="owner@example.com", password="x")
         self.ad = Ad.objects.create(
             owner=self.owner, title="t", description="d", location="L",
             price=Decimal("100.00"), rooms=1, housing_type="apartment", is_active=True

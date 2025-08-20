@@ -5,9 +5,9 @@ from .views import AdViewSet, BookingViewSet, ReviewViewSet, AdImageViewSet, Sea
 app_name = "ads"
 
 router = DefaultRouter()
-router.register(r"ads", AdViewSet)
-router.register(r"bookings", BookingViewSet)
-router.register(r"reviews", ReviewViewSet)
+router.register(r"", AdViewSet, basename="ad")
+router.register(r"bookings", BookingViewSet, basename="booking")
+router.register(r"reviews", ReviewViewSet, basename="review")
 router.register(r"ad-images", AdImageViewSet, basename="ad-images")
 
 urlpatterns = [

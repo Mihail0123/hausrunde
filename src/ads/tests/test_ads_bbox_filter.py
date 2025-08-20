@@ -7,7 +7,6 @@ from src.ads.models import Ad
 
 User = get_user_model()
 
-
 class AdsBBoxFilterTests(TestCase):
     """Tests for bbox filters: lat_min/lat_max/lon_min/lon_max."""
 

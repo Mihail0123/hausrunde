@@ -1,9 +1,7 @@
 from django.contrib.auth import get_user_model
 from django.test import TestCase
 from rest_framework.test import APIClient
-
 from src.ads.models import Ad
-
 
 class AdValidationTests(TestCase):
     def setUp(self):
@@ -45,11 +43,9 @@ class AdValidationTests(TestCase):
         r = self._patch({"latitude": 95})
         self.assertEqual(r.status_code, 400)
         self.assertIn("latitude", r.data)
-
         r2 = self._patch({"latitude": -95})
         self.assertEqual(r2.status_code, 400)
         self.assertIn("latitude", r2.data)
-
         r_ok = self._patch({"latitude": 52.52})
         self.assertEqual(r_ok.status_code, 200)
 
@@ -57,11 +53,9 @@ class AdValidationTests(TestCase):
         r = self._patch({"longitude": 200})
         self.assertEqual(r.status_code, 400)
         self.assertIn("longitude", r.data)
-
         r2 = self._patch({"longitude": -200})
         self.assertEqual(r2.status_code, 400)
         self.assertIn("longitude", r2.data)
-
         r_ok = self._patch({"longitude": 13.405})
         self.assertEqual(r_ok.status_code, 200)
 

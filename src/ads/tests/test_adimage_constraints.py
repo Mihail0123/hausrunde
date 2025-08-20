@@ -4,10 +4,9 @@ from decimal import Decimal
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.test import override_settings
-from django.urls import reverse
 from rest_framework.test import APIClient, APITestCase
-
 from src.ads.models import Ad, AdImage
+
 
 def make_image_bytes(w=50, h=50, fmt="JPEG"):
     buf = BytesIO()
@@ -15,6 +14,7 @@ def make_image_bytes(w=50, h=50, fmt="JPEG"):
     img.save(buf, format=fmt)
     buf.seek(0)
     return buf.getvalue()
+
 
 class AdImageConstraintsTests(APITestCase):
     def setUp(self):
@@ -75,7 +75,6 @@ class AdImageConstraintsTests(APITestCase):
         self.assertIn("File too large", str(resp.data))
 
     def test_replace_validates_and_checks_owner(self):
-        # create initial image by owner
         self.client.force_authenticate(self.owner)
         upload_url = f"/api/ads/{self.ad.id}/images/"
         pic = SimpleUploadedFile("p.jpg", make_image_bytes(), content_type="image/jpeg")
