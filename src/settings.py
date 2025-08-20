@@ -35,6 +35,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # --- DEBUG / HOSTS ---
 DEBUG = _bool(os.getenv("DEBUG"), True)
 ALLOWED_HOSTS = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",") if h.strip()]
+if DEBUG:
+    for h in ("127.0.0.1", "localhost", "testserver"):
+        if h not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(h)
 
 
 # Quick-start development settings - unsuitable for production
@@ -192,14 +196,14 @@ REST_FRAMEWORK = {
         'user': '1000/day',
         'anon': '200/day',
         # Scoped limits
-        'ads_list': '60/min',
-        'ads_retrieve': '240/min',
-        'ads_availability': '120/min',
-        'adimage_upload': '10/min',
-        'adimage_replace': '10/min',
-        'bookings_mutation': '30/hour',
+        'ads_list': '1000/min',
+        'ads_retrieve': '2000/min',
+        'ads_availability': '1000/min',
+        'adimage_upload': '100/min',
+        'adimage_replace': '100/min',
+        'bookings_mutation': '300/hour',
         'auth_login': '10/min',
-        'auth_register': '10/hour',
+        'auth_register': '60/hour',
         'auth_debug': '60/min',
         'search_top': '30/min',
     },

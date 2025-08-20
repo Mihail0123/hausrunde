@@ -22,7 +22,7 @@ class SearchTopTests(TestCase):
         items = r.json()
         self.assertEqual(len(items), 2)
         self.assertEqual(items[0]["q"], "berlin")
-        self.assertEqual(items["count"], 3)
+        self.assertEqual(items[0]["count"], 3)
         self.assertEqual(items[1]["q"], "paris")
         self.assertEqual(items[1]["count"], 2)
 

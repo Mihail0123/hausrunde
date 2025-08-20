@@ -1,8 +1,10 @@
 from django.db.models import Q, Avg, Count, Exists, OuterRef
+from django.http import JsonResponse
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
 from rest_framework.exceptions import ValidationError, PermissionDenied, MethodNotAllowed
+from rest_framework.renderers import JSONRenderer
 from rest_framework.response import Response
 from rest_framework import serializers as rf_serializers
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -28,10 +30,13 @@ from .permissions import (
 )
 from .pagination import AdPagination
 from .validators import validate_image_file
-from .throttling import (
-    AdsListThrottle, AdsRetrieveThrottle, AdsAvailabilityThrottle,
-    AdImageUploadThrottle, AdImageReplaceThrottle,
-)
+
+class ScopedRateThrottleIsolated(ScopedRateThrottle):
+    def get_cache_key(self, request, view):
+        key = super().get_cache_key(request, view)
+        if key is None:
+            return None
+        return f"{key}:{self.get_rate() or 'none'}"
 
 VIEW_DEDUP_HOURS = 6
 
@@ -311,20 +316,16 @@ class AdViewSet(viewsets.ModelViewSet):
     ordering = ('-created_at',)
 
     # Per-action throttling
-    throttle_classes = (ScopedRateThrottle,)
+    throttle_classes = (ScopedRateThrottleIsolated,)
 
     def get_throttles(self):
-        action = getattr(self, 'action', None)
-        if action == 'list':
-            self.throttle_scope = 'ads_list'
-        elif action == 'retrieve':
-            self.throttle_scope = 'ads_retrieve'
-        elif action == 'availability':
-            self.throttle_scope = 'ads_availability'
-        elif action == 'upload_image':
-            self.throttle_scope = 'adimage_upload'
-        else:
-            self.throttle_scope = None
+        scope_map = {
+            'list': 'ads_list',
+            'retrieve': 'ads_retrieve',
+            'availability': 'ads_availability',
+            'upload_image': 'adimage_upload',
+        }
+        self.throttle_scope = scope_map.get(getattr(self, 'action', None))
         return super().get_throttles()
 
     def get_queryset(self):
@@ -731,7 +732,11 @@ class AdImageViewSet(viewsets.ModelViewSet):
     throttle_classes = (ScopedRateThrottle,)
 
     def get_throttles(self):
-        return [AdImageReplaceThrottle()] if getattr(self, "action", None) == "replace" else []
+        scope_map = {
+            'replace': 'adimage_replace',
+        }
+        self.throttle_scope = scope_map.get(getattr(self, 'action', None))
+        return super().get_throttles()
 
     def create(self, request, *args, **kwargs):
         # Disallow POST /api/ad-images/ (file upload happens via /api/ads/{id}/images/ and /ad-images/{id}/replace/)
@@ -855,11 +860,13 @@ class BookingViewSet(viewsets.ModelViewSet):
     throttle_classes = (ScopedRateThrottle,)
 
     def get_throttles(self):
-        if self.action in ('create', 'cancel', 'confirm', 'reject',
-                           'update', 'partial_update', 'destroy'):
-            self.throttle_scope = 'bookings_mutation'
-        else:
-            self.throttle_scope = None
+        scope_map = {
+            'create': 'bookings_mutation',
+            'confirm': 'bookings_mutation',
+            'reject': 'bookings_mutation',
+            'cancel': 'bookings_mutation',
+        }
+        self.throttle_scope = scope_map.get(getattr(self, 'action', None))
         return super().get_throttles()
 
     def get_queryset(self):
@@ -1020,14 +1027,9 @@ class SearchTopItemSerializer(rf_serializers.Serializer):
 )
 class SearchHistoryTopView(APIView):
     permission_classes = [permissions.AllowAny]
-
-    # Throttle search-top endpoint
-    throttle_classes = (ScopedRateThrottle,)
+    renderer_classes = [JSONRenderer]
+    throttle_classes = (ScopedRateThrottleIsolated,)
     throttle_scope = 'search_top'
-
-    def get_throttles(self):
-        self.throttle_scope = 'search_top'
-        return super().get_throttles()
 
     def get(self, request):
         limit = int(request.query_params.get('limit', 10) or 10)
@@ -1037,6 +1039,7 @@ class SearchHistoryTopView(APIView):
             .exclude(q='')
             .values('q')
             .annotate(count=Count('id'))
-            .order_by('-count')[:limit]
+            .order_by('-count', 'q')[:limit]
         )
-        return Response(list(qs), status=status.HTTP_200_OK)
+        data = list(qs)
+        return JsonResponse(data, safe=False, status=200)
