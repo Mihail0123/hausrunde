@@ -1,7 +1,8 @@
-const root = document.getElementById('app') || document.body;
-const esc = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+// static/js/app.js
 
-// рендер ошибки вместо белого экрана
+// ---------- видимая поверхность ошибок, чтобы не было "белого экрана"
+const root = document.getElementById('app') || document.body;
+const esc  = (s) => String(s ?? '').replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
 function showFatal(err) {
   const msg = err?.stack || err?.message || String(err);
   root.innerHTML = `
@@ -12,20 +13,24 @@ function showFatal(err) {
   console.error(err);
 }
 
-// Вся логика — внутри IIFE с try/catch, чтобы поймать даже ошибки импортов
-(async () => {
-  try {
-    // динамические импорты (если любой модуль упадёт — попадём в catch)
-    const { setAccess, getAccess } = await import('./config.js');
-    const { qs } = await import('./utils.js');
-    const api      = await import('./api.js');
-    const mapMod   = await import('./map.js');
-    const adsMod   = await import('./ads.js');
-    const myadsMod = await import('./myads.js');
-    const bookMod  = await import('./bookings.js');
-    const revMod   = await import('./reviews.js');
+// на всякий: ловим необработанные
+window.addEventListener('error',  e => showFatal(e.error || e.message || e));
+window.addEventListener('unhandledrejection', e => showFatal(e.reason || e));
 
-    // каркас UI
+// ---------- основной бутстрап (динамические импорты + stage для понятных трейсев)
+(async () => {
+  let stage = "bootstrap";
+  try {
+    stage = "config.js"; const { setAccess, getAccess } = await import('./config.js');
+    stage = "utils.js";  const { qs } = await import('./utils.js');
+    stage = "api.js";    const api      = await import('./api.js');
+    stage = "map.js";    const mapMod   = await import('./map.js');
+    stage = "ads.js";    const adsMod   = await import('./ads.js');
+    stage = "myads.js";  const myadsMod = await import('./myads.js');
+    stage = "bookings.js"; const bookMod  = await import('./bookings.js');
+    // reviews.js нам не нужен здесь — отзывы не показываем в Analytics
+
+    // ---------- каркас UI
     root.innerHTML = `
       <div class="container">
         <h1>Hausrunde</h1>
@@ -54,24 +59,23 @@ function showFatal(err) {
       btn.addEventListener('click', ()=> activate(btn.dataset.tab));
     });
 
-    // === Ads (карта + bbox) ===
+    // ---------- Ads (карта + bbox). ВАЖНО: сначала рендер секции, потом initMap('map')
     const secAds = qs('#sec-ads');
     adsMod.mountAds(secAds, {
-      onOpenAd: (ad)=> { activate('analytics'); revCtl.load(ad.id); },
+      // onOpenAd опционален — сейчас ничего не делаем (отзывы/деталка будут отдельной итерацией)
       onNeedBBox: (registerBBox) => {
-        // создаём карту только после того, как секция вставит <div id="map">
-        const mapCtl = mapMod.initMap('map');
+        const mapCtl = mapMod.initMap('map');      // контейнер #map уже существует (его добавил mountAds)
         mapCtl.onBoundsChange(b => registerBBox(b));
       }
     });
 
-    // === My Ads ===
+    // ---------- My Ads
     myadsMod.mountMyAds(qs('#sec-my'));
 
-    // === Bookings ===
+    // ---------- Bookings
     bookMod.mountBookings(qs('#sec-book'));
 
-    // === Auth ===
+    // ---------- Auth
     qs('#sec-auth').innerHTML = `
       <h2>Auth</h2>
       <div class="grid grid-2">
@@ -80,6 +84,7 @@ function showFatal(err) {
           <input id="email" placeholder="Email">
           <input id="password" type="password" placeholder="Password">
           <button class="btn" id="btnLogin">Login</button>
+          <button class="btn-outline" id="btnLogout">Logout</button>
           <div class="muted" id="authMsg"></div>
         </div>
         <div class="card">
@@ -96,34 +101,49 @@ function showFatal(err) {
         const tok = await api.login(qs('#email').value.trim(), qs('#password').value);
         setAccess(tok.access);
         qs('#authMsg').textContent = 'Logged in';
-      } catch(e){ qs('#authMsg').textContent = 'Error: ' + e.message; }
+      } catch(e){ qs('#authMsg').textContent = 'Error: ' + (e.message || e); }
+    });
+    qs('#btnLogout').addEventListener('click', ()=>{
+      setAccess(null);
+      qs('#authMsg').textContent = 'Logged out';
     });
     qs('#btnReg').addEventListener('click', async ()=>{
       try {
         await api.register({ email: qs('#r_email').value.trim(), password: qs('#r_password').value });
         qs('#regMsg').textContent = 'Registered. Now login.';
-      } catch(e){ qs('#regMsg').textContent = 'Error: ' + e.message; }
+      } catch(e){ qs('#regMsg').textContent = 'Error: ' + (e.message || e); }
     });
 
-    // === Analytics (Top searches) ===
+    // ---------- Analytics (только Top searches; чипсы подставляют q в Ads)
     qs('#sec-analytics').innerHTML = `<h2>Search analytics</h2><div id="topBox" class="row"></div>`;
-const topBox = qs('#topBox');
-async function loadTop(){
-  try{
-    const items = await api.topSearches(15);
-    topBox.innerHTML = `<span class="muted">Top searches:</span>` + items.map(i=>`<span class="tab" data-q="${esc(i.q)}">${esc(i.q||'(empty)')} · ${i.count}</span>`).join('');
-    topBox.querySelectorAll('[data-q]').forEach(ch=>{
-      ch.addEventListener('click', ()=>{
-        activate('ads');
-        const field = document.querySelector('#sec-ads input[name="q"]');
-        if (field) field.value = ch.getAttribute('data-q')==='(empty)'?'':ch.getAttribute('data-q');
-        document.querySelector('#sec-ads #adsSearch')?.click();
-      });
-    });
-  }catch(e){ topBox.textContent = 'Error: ' + e.message; }
-}
-await loadTop();
- } catch (err) {
+    const topBox = qs('#topBox');
+    async function loadTop(){
+      try{
+        const items = await api.topSearches(15);
+        topBox.innerHTML =
+          `<span class="muted">Top searches:</span>` +
+          items.map(i=>`<span class="tab" data-q="${esc(i.q)}">${esc(i.q||'(empty)')} · ${i.count}</span>`).join('');
+        topBox.querySelectorAll('[data-q]').forEach(ch=>{
+          ch.addEventListener('click', ()=>{
+            activate('ads');
+            const field = document.querySelector('#sec-ads input[name="q"]');
+            if (field) field.value = ch.getAttribute('data-q')==='(empty)' ? '' : ch.getAttribute('data-q');
+            document.querySelector('#sec-ads #adsSearch')?.click();
+          });
+        });
+      }catch(e){ topBox.textContent = 'Error: ' + (e.message || e); }
+    }
+    await loadTop();
+
+    // автологин-индикатор
+    if (getAccess()) {
+      const msg = document.getElementById('authMsg');
+      if (msg) msg.textContent = 'Token loaded';
+    }
+
+    console.log('[hausrunde] boot OK');
+  } catch (err) {
+    err.message = `[${stage}] ${err.message || err}`;
     showFatal(err);
   }
 })();

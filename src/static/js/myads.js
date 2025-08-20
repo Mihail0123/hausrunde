@@ -1,8 +1,14 @@
 import { esc } from "./utils.js";
+import {getAccess} from "./config.js";
 import { fetchAds, createAd, patchAd, uploadAdImages, deleteImage, replaceImage, fetchAd } from "./api.js";
 
 export function mountMyAds(root){
+  if (!getAccess()) {
+    root.innerHTML = `<div class="card">Please <b>login</b> on the Auth tab to see and manage your ads.</div>`;
+    return;
+  }
   root.innerHTML = `
+  
     <h2>My Ads</h2>
     <div id="mineList" class="grid"></div>
     <div class="card" style="margin-top:10px;">
@@ -15,8 +21,12 @@ export function mountMyAds(root){
         <input name="price" type="number" placeholder="Price (€/day)">
         <input name="rooms" type="number" placeholder="Rooms">
         <input name="area" type="number" step="0.01" placeholder="Area">
-        <input name="latitude" type="number" step="0.000001" placeholder="Lat">
-        <input name="longitude" type="number" step="0.000001" placeholder="Lon">
+        <div style="grid-column:1/-1">
+            <div id="createMap" style="height:220px;border:1px solid #ddd;border-radius:10px;margin-bottom:6px;"></div>
+            <div class="muted">Click on map to set coordinates</div>
+            <input name="latitude" type="hidden">
+            <input name="longitude" type="hidden">
+          </div>
         <button class="btn" id="btnCreate" style="grid-column:1/-1">Create</button>
         <div class="muted" id="createMsg" style="grid-column:1/-1"></div>
       </div>
@@ -57,6 +67,21 @@ export function mountMyAds(root){
       loadMine();
     }catch(e){ root.querySelector('#createMsg').textContent = 'Error: ' + e.message; }
   });
+
+  // карта-пикер для координат
+  (function initCreateMap(){
+    const map = L.map('createMap').setView([52.52, 13.405], 11);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+    let marker = null;
+    map.on('click', (e)=>{
+      const { lat, lng } = e.latlng;
+      if (!marker) marker = L.marker([lat,lng]).addTo(map);
+      else marker.setLatLng([lat,lng]);
+      const f = root.querySelector('#createForm');
+      f.elements.latitude.value  = lat.toFixed(6);
+      f.elements.longitude.value = lng.toFixed(6);
+    });
+  })();
 
   function openAdEditor(ad){
     const m = root.querySelector('#adModal');

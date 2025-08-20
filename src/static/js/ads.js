@@ -1,10 +1,10 @@
+// static/js/ads.js
 import { qs, esc } from "./utils.js";
 import { fetchAds, fetchAd } from "./api.js";
 
 /**
  * Рисует раздел Ads (форма фильтров + карта + список).
- * @param {HTMLElement} root
- * @param {{ onOpenAd?: (ad) => void, onNeedBBox: (register: (bbox)=>void) => void }} hooks
+ * Параметры в запрос НЕ попадают, если пустые/undefined — 400 больше не будет.
  */
 export function mountAds(root, { onOpenAd, onNeedBBox }) {
   root.innerHTML = `
@@ -13,7 +13,13 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
     <form class="grid grid-3" id="adsFilter" autocomplete="off">
       <input name="q"               placeholder="Search (q)">
       <input name="location"       placeholder="Location">
-      <input name="housing_type"   placeholder="Housing type">
+      <select name="housing_type">
+        <option value="">Housing type</option>
+        <option value="wohnung">Wohnung</option>
+        <option value="house">House</option>
+        <option value="room">Room</option>
+        <option value="studio">Studio</option>
+      </select>
 
       <input name="price_min" type="number" placeholder="Price min">
       <input name="price_max" type="number" placeholder="Price max">
@@ -33,8 +39,8 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
         <option value="average_rating">rating ↑</option>
       </select>
 
-      <input name="area_min" type="number" step="0.1" placeholder="Area ≥">
-      <input name="area_max" type="number" step="0.1" placeholder="Area ≤">
+      <input name="area_min" type="number" step="0.1" placeholder="Area ≥ (m²)">
+      <input name="area_max" type="number" step="0.1" placeholder="Area ≤ (m²)">
       <input name="available_from" type="date" placeholder="From">
 
       <input name="available_to" type="date" placeholder="To">
@@ -66,26 +72,33 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
   let bbox = null; // {lat_min, lat_max, lon_min, lon_max}
 
   // --- helpers --------------------------------------------------------------
-  const toNumber = (v) => (v === "" || v === undefined || v === null ? undefined : Number(v));
+  const num = (v) => (v === "" || v === undefined || v === null ? undefined : Number(v));
+  function clean(obj){
+    const out = {};
+    for (const [k,v] of Object.entries(obj)){
+      if (v === undefined || v === null || v === "") continue;
+      out[k] = v;
+    }
+    return out;
+  }
   function buildParams() {
     const fd  = new FormData(filter);
-    const obj = Object.fromEntries(fd);
+    const raw = Object.fromEntries(fd);
 
-    // нормализуем пустые строки → undefined
-    for (const k of Object.keys(obj)) if (obj[k] === "") obj[k] = undefined;
-
-    // числовые поля
-    ["price_min","price_max","rooms_min","rooms_max","area_min","area_max","rating_min","page_size"]
-      .forEach(k => { if (obj[k] !== undefined) obj[k] = toNumber(obj[k]); });
-
-    // дефолт сортировки (если не выбрано)
-    if (!obj.ordering) obj.ordering = "-created_at";
-
-    // пагинация
-    obj.page = page;
-
-    // bbox (если есть)
-    return { ...obj, ...(bbox || {}) };
+    // нормализуем типы
+    const p = {
+      q: raw.q, location: raw.location, housing_type: raw.housing_type,
+      price_min: num(raw.price_min), price_max: num(raw.price_max),
+      rooms_min: num(raw.rooms_min), rooms_max: num(raw.rooms_max),
+      rating_min: num(raw.rating_min),
+      area_min: num(raw.area_min), area_max: num(raw.area_max),
+      available_from: raw.available_from, available_to: raw.available_to,
+      ordering: raw.ordering || "-created_at",
+      page_size: num(raw.page_size) ?? 10,
+      page,
+      ...(bbox || {})
+    };
+    return clean(p);
   }
 
   async function load() {
@@ -96,7 +109,7 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
       let data  = await fetchAds(buildParams());
       let items = data.results || data || [];
 
-      // 2) если пусто — пробуем повтор без bbox (глобально)
+      // 2) если пусто — повтор без bbox (глобально)
       if (!items.length) {
         const p = buildParams();
         delete p.lat_min; delete p.lat_max; delete p.lon_min; delete p.lon_max;
@@ -130,7 +143,6 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
       </div>
     `).join('');
 
-    // клик по карточке → onOpenAd(full)
     list.querySelectorAll('.card').forEach(el=>{
       el.addEventListener('click', async ()=>{
         const id = Number(el.getAttribute('data-id'));
@@ -139,7 +151,6 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
       });
     });
 
-    // пагинация
     const total = data.count ?? items.length;
     const size  = buildParams().page_size || 10;
     const pages = Math.max(1, Math.ceil(total / size));
@@ -157,22 +168,16 @@ export function mountAds(root, { onOpenAd, onNeedBBox }) {
   }
 
   // --- events ---------------------------------------------------------------
-  // submit формы
   filter.addEventListener('submit', (e) => { e.preventDefault(); page = 1; load(); });
-
-  // кнопки
-  qs('#adsSearch', filter).addEventListener('click', (e) => {
-    e.preventDefault();
-    filter.requestSubmit();
-  });
+  qs('#adsSearch', filter).addEventListener('click', (e) => { e.preventDefault(); filter.requestSubmit(); });
   qs('#adsReset',  filter).addEventListener('click', (e) => {
     e.preventDefault();
     filter.reset(); bbox = null; page = 1; load();
   });
 
-  // карта сообщает bbox через коллбек
+  // карта → bbox
   onNeedBBox((b) => { bbox = b; page = 1; load(); });
 
-  // первичная загрузка (на случай, если bbox ещё не пришёл)
+  // первичная загрузка, если bbox ещё не пришёл
   load();
 }

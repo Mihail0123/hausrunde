@@ -78,10 +78,16 @@ class AdFilter(df.FilterSet):
 
     def filter_mine(self, queryset, name, value):
         """Return only ads owned by the current authenticated user."""
+        if not value:  # mine не запрошен
+            return queryset
+
         req = getattr(self, 'request', None)
-        if value and req and req.user.is_authenticated:
-            return queryset.filter(owner=req.user)
-        return queryset
+        user = getattr(req, 'user', None)
+
+        if not user or not user.is_authenticated:
+            return queryset.none()
+
+        return queryset.filter(owner=user)
 
     def filter_rating_min(self, queryset, name, value):
         try:
