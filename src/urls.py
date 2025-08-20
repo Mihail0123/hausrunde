@@ -1,5 +1,6 @@
 from django.contrib import admin
 from django.urls import path, include
+from django.views.generic import TemplateView
 from drf_spectacular.views import (
     SpectacularAPIView,
     SpectacularSwaggerView,
@@ -26,6 +27,9 @@ urlpatterns = [
     path("api/auth/", include("src.users.urls", namespace="users")),
     path('api/auth/token/', ThrottledTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/token/refresh/', ThrottledTokenRefreshView.as_view(), name='token_refresh'),
+
+    # Front
+    path("", TemplateView.as_view(template_name="frontend/index.html"), name="front-index"),
 ]
 
 if settings.DEBUG:

@@ -1,0 +1,22 @@
+<header class="nav">
+<div class="nav__left">
+<a href="/" class="logo">🏠 Hausrunde</a>
+</div>
+<div class="nav__center">
+<button class="btn ghost" id="btnTopSearches">Top searches</button>
+<button class="btn ghost" id="btnFiltersToggle">Filters</button>
+</div>
+<div class="nav__right">
+{% if request.user.is_authenticated %}
+<span class="muted">Hi, {{ request.user.username }}</span>
+<a class="btn ghost" href="/ads/mine/">My ads</a>
+<a class="btn ghost" href="/bookings/mine/">My bookings</a>
+<a class="btn ghost" href="/favorites/">Favorites</a>
+<a class="btn" href="/ads/create/">Create ad</a>
+<a class="btn ghost" href="/logout/">Logout</a>
+{% else %}
+<a class="btn ghost" href="/login/">Login</a>
+<a class="btn" href="/register/">Register</a>
+{% endif %}
+</div>
+</header>
