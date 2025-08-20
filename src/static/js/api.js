@@ -1,70 +1,126 @@
-// Centralized API functions. Adjust API_BASE and endpoints to your project.
-const API_BASES = ['/api/v1', '/api']; // пробуем оба
+import { API, hAuth } from "./config.js";
 
-function qs(params = {}) {
-  const sp = new URLSearchParams();
-  Object.entries(params).forEach(([k, v]) => {
-    if (v === undefined || v === null || v === '') return;
-    sp.append(k, v);
+// --- Auth (JWT) ---
+export async function login(email, password){
+  const r = await fetch(`${API}/auth/token/`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ email, password })
   });
-  return sp.toString();
+  if(!r.ok) throw new Error('Invalid credentials');
+  return r.json(); // {access, refresh}
+}
+export async function register(payload){
+  const r = await fetch(`${API}/auth/register/`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify(payload)
+  });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
-async function getJson(url) {
-  const res = await fetch(url);
-  if (!res.ok) {
-    const err = new Error(`GET ${url} -> ${res.status}`);
-    err.status = res.status;
-    throw err;
+// --- Ads ---
+export async function fetchAds(params){
+  const qs = new URLSearchParams(params);
+  const url = `${API}/ads/?${qs}`;
+  const r = await fetch(url, { headers: hAuth() });
+  if (!r.ok) {
+    const body = await r.text();
+    throw new Error(`ADS ${r.status} at ${url}\n${body}`);
   }
-  return res.json();
+  return r.json();
+}
+}
+export async function fetchAd(id){
+  const r = await fetch(`${API}/ads/${id}/`, { headers: hAuth() });
+  if(!r.ok) throw new Error(`AD ${r.status}`);
+  return r.json();
+}
+export async function createAd(payload){
+  const r = await fetch(`${API}/ads/`, { method:'POST', headers:{...hAuth(), 'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function patchAd(id, payload){
+  const r = await fetch(`${API}/ads/${id}/`, { method:'PATCH', headers:{...hAuth(), 'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function adAvailability(adId, status){ // status: PENDING|CONFIRMED optional
+  const r = await fetch(`${API}/ads/${adId}/availability?${status ? 'status='+status : ''}`, { headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json(); // [{start:..., end:...}, ...]
 }
 
-export async function fetchAds(params = {}) {
-  const query = qs(params);
-  for (const base of API_BASES) {
-    try {
-      const data = await getJson(`${base}/ads/?${query}`);
-      return Array.isArray(data) ? data : (data.results || []);
-    } catch (e) {
-      if (e.status === 404) continue;
-      throw e;
-    }
-  }
-  throw new Error('ads endpoint not found at /api/v1 or /api');
+// Images
+export async function uploadAdImages(adId, files, caption=""){
+  const fd = new FormData();
+  for(const f of files) fd.append('images', f);
+  if(caption) fd.append('caption', caption);
+  const r = await fetch(`${API}/ads/${adId}/images/`, { method:'POST', headers: { ...hAuth() }, body: fd });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function replaceImage(imageId, file, caption=""){
+  const fd = new FormData();
+  fd.append('image', file);
+  if(caption) fd.append('caption', caption);
+  const r = await fetch(`${API}/ad-images/${imageId}/replace/`, { method:'POST', headers:{...hAuth()}, body: fd });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function deleteImage(imageId){
+  const r = await fetch(`${API}/ad-images/${imageId}/`, { method:'DELETE', headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return true;
 }
 
-export async function fetchTopSearches(limit = 10) {
-  const bases = ['/api/v1', '/api'];
-  const paths = ['/search/history/top/', '/search/top/']; // оба варианта
-  for (const base of bases) {
-    for (const p of paths) {
-      const url = `${base}${p}?limit=${encodeURIComponent(limit)}`;
-      const res = await fetch(url);
-      if (res.ok) {
-        const data = await res.json();
-        // backend возвращает ПЛОСКИЙ список [{q, count}, ...]
-        return Array.isArray(data) ? data : (data.results || []);
-      }
-    }
-  }
-  return [];
+// --- Bookings ---
+export async function fetchBookings(){
+  const r = await fetch(`${API}/bookings/`, { headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function createBooking(payload){
+  const r = await fetch(`${API}/bookings/`, { method:'POST', headers:{...hAuth(),'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
+}
+export async function cancelQuote(bookingId){
+  const r = await fetch(`${API}/bookings/${bookingId}/cancel-quote/`, { headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json(); // {days_until, fee_pct, fee_amount, total_cost, message}
+}
+export async function cancelBooking(bookingId){
+  const r = await fetch(`${API}/bookings/${bookingId}/cancel/`, { method:'POST', headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return true;
+}
+export async function confirmBooking(bookingId){
+  const r = await fetch(`${API}/bookings/${bookingId}/confirm/`, { method:'POST', headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return true;
+}
+export async function rejectBooking(bookingId){
+  const r = await fetch(`${API}/bookings/${bookingId}/reject/`, { method:'POST', headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return true;
 }
 
-export async function logSearchTerm(query) {
-  if (!query) return;
-  const payload = JSON.stringify({ query });
-  for (const base of ['/api/v1', '/api']) {
-    try {
-      await fetch(`${base}/search/log/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: payload,
-      });
-      return; // успех на первом попавшемся — выходим
-    } catch (_) {
-      // молча пробуем следующий base
-    }
-  }
+// --- Reviews ---
+export async function fetchReviews(adId){
+  const r = await fetch(`${API}/reviews/?ad=${adId}`, { headers: hAuth() });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json(); // paginated
+}
+export async function createReview(payload){
+  const r = await fetch(`${API}/reviews/`, { method:'POST', headers:{...hAuth(),'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+  if(!r.ok) throw new Error(await r.text());
+  return r.json();
 }
 
+// --- Search analytics ---
+export async function topSearches(limit=10){
+  const r = await fetch(`${API}/search/top/?limit=${limit}`, { headers: hAuth() }); // публично доступно
+  if(!r.ok) throw new Error(await r.text());
+  return r.json(); // [{q,count},...]
+}

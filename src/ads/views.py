@@ -60,6 +60,8 @@ class AdFilter(df.FilterSet):
 
     q    = df.CharFilter(method='filter_q', label='Search')
     mine = df.BooleanFilter(method='filter_mine', label='Only my ads')
+    rating_min = df.NumberFilter(method='filter_rating_min', label='Min average rating')
+    rating_max = df.NumberFilter(method='filter_rating_max', label='Max average rating')
     available_from = df.DateFilter(method='filter_available', label='Available from (YYYY-MM-DD)')
     available_to   = df.DateFilter(method='filter_available', label='Available to (YYYY-MM-DD)')
 
@@ -80,6 +82,20 @@ class AdFilter(df.FilterSet):
         if value and req and req.user.is_authenticated:
             return queryset.filter(owner=req.user)
         return queryset
+
+    def filter_rating_min(self, queryset, name, value):
+        try:
+            v = float(value)
+        except (ValueError, TypeError):
+            return queryset
+        return queryset.filter(average_rating__gte=v)
+
+    def filter_rating_max(self, queryset, name, value):
+        try:
+            v = float(value)
+        except (ValueError, TypeError):
+            return queryset
+        return queryset.filter(average_rating__lte=v)
 
     def _availability_range(self):
         """
@@ -131,6 +147,7 @@ class AdFilter(df.FilterSet):
             'mine',
             'available_from', 'available_to',
             'lat_min', 'lat_max', 'lon_min', 'lon_max',
+            'rating_min', 'rating_max',
         ]
 
 
@@ -312,7 +329,7 @@ class AdViewSet(viewsets.ModelViewSet):
 
     filter_backends = (df.DjangoFilterBackend, filters.OrderingFilter)
     filterset_class = AdFilter
-    ordering_fields = ('price', 'created_at', 'area', 'reviews_count', 'views_count')
+    ordering_fields = ('price', 'created_at', 'area', 'reviews_count', 'views_count', 'average_rating')
     ordering = ('-created_at',)
 
     # Per-action throttling

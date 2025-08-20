@@ -29,7 +29,7 @@ urlpatterns = [
     path('api/auth/token/refresh/', ThrottledTokenRefreshView.as_view(), name='token_refresh'),
 
     # Front
-    path("", TemplateView.as_view(template_name="frontend/index.html"), name="front-index"),
+    path("", TemplateView.as_view(template_name="frontend/app.html"), name="front"),
 ]
 
 if settings.DEBUG:
