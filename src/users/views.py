@@ -128,9 +128,13 @@ class RegisterView(CreateAPIView):
     destroy=extend_schema(summary="Delete user"),
 )
 class CustomUserViewSet(viewsets.ModelViewSet):
+    """
+    Admin-only user management.
+    Regular users should use /auth/me/ for self profile read.
+    """
     queryset = CustomUser.objects.all()
     serializer_class = CustomUserSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAdminUser]
 
 
 @extend_schema(tags=["auth"])
@@ -213,8 +217,10 @@ class LogoutView(APIView):
 
     def post(self, request):
         response = Response({"detail": "Logout successful"}, status=status.HTTP_200_OK)
-        response.delete_cookie('access_token', path='/')
-        response.delete_cookie('refresh_token', path='/')
+        path = getattr(settings, 'AUTH_COOKIE_PATH', '/')
+        domain = getattr(settings, 'AUTH_COOKIE_DOMAIN', None)
+        response.delete_cookie('access_token', path=path, domain=domain)
+        response.delete_cookie('refresh_token', path=path, domain=domain)
         return response
 
 @extend_schema(

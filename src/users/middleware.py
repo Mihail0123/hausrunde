@@ -1,3 +1,4 @@
+from datetime import datetime,timezone
 from django.utils.timezone import now
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
@@ -32,6 +33,7 @@ class JWTAuthCookieMiddleware:
                 new_access = refresh.access_token
                 request.META['HTTP_AUTHORIZATION'] = f'Bearer {str(new_access)}'
 
+                access_expiry = datetime.fromtimestamp(new_access['exp'], tz=timezone.utc)
                 response = self.get_response(request)
                 response.set_cookie(
                     key='access_token',
@@ -39,9 +41,9 @@ class JWTAuthCookieMiddleware:
                     httponly=True,
                     secure=getattr(settings, 'AUTH_COOKIE_SECURE', not settings.DEBUG),
                     samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax'),
+                    expires=access_expiry,
                     path=getattr(settings, 'AUTH_COOKIE_PATH', '/'),
                     domain=getattr(settings, 'AUTH_COOKIE_DOMAIN', None),
-                    expires=new_access['exp'],
                 )
                 return response
             except TokenError:

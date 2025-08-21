@@ -159,7 +159,7 @@ class AdFilter(df.FilterSet):
 @extend_schema_view(
     list=extend_schema(
         summary="List ads",
-        description="Public list with smart search (`q`), filters (price, rooms, location, type), ordering and pagination.",
+        description="Search/browse public ads with filters and ordering.",
         auth=[],
         parameters=[
             OpenApiParameter(
@@ -915,7 +915,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "- Free if there are >= 3 full days until start\n"
                 "- If < 3 days remain: 20% of total per day that falls inside the 3-day window (20/40/60%)\n"
                 "- If the start has already begun: no refund (100% fee)\n\n"
-                "Tenant only. Allowed statuses: CONFIRMED."
+                "Tenant only. Allowed statuses: PENDING, CONFIRMED. "
+                "Returns estimated cancellation fee. For PENDING it is zero."
         ),
         responses={200: OpenApiResponse(description="Cancellation quote as JSON")}
     )

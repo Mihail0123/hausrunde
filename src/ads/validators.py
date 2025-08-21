@@ -15,9 +15,10 @@ def validate_image_file(uploaded_file):
     Leaves the file pointer at position 0 for subsequent saving.
     """
     # 1) file size
-    max_bytes = int(getattr(settings, "AD_IMAGE_MAX_MB", 5)) * BYTES_IN_MB
+    max_mb = int(getattr(settings, 'AD_IMAGE_MAX_MB', 5))
+    max_bytes = max_mb * 1024 * 1024
     if uploaded_file.size > max_bytes:
-        raise ValidationError(f"File too large: max {settings.AD_IMAGE_MAX_MB} MB")
+        raise ValidationError(f"File too large: max {max_mb} MB")
 
     # 2) format & integrity
     try:
