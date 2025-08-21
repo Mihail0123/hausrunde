@@ -1,4 +1,4 @@
-from datetime import datetime,timezone
+from datetime import datetime, timezone
 from django.utils.timezone import now
 from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
@@ -6,14 +6,19 @@ from rest_framework_simplejwt.exceptions import TokenError
 
 class JWTAuthCookieMiddleware:
     """
-    mw to get JWT token from cookies to Auth header
-    auto updates access with refresh token
+    Get JWT from httpOnly cookies and (if needed) inject into Authorization header.
+    If access is expired but refresh is valid, auto-issue a new access token and set cookie.
+    IMPORTANT: Do NOT override an explicit Authorization header provided by the client.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
+        # Respect explicit Authorization header from client (e.g., API explorer, tests)
+        if request.META.get('HTTP_AUTHORIZATION'):
+            return self.get_response(request)
+
         access_token = request.COOKIES.get('access_token')
         refresh_token = request.COOKIES.get('refresh_token')
         response = None
@@ -25,7 +30,7 @@ class JWTAuthCookieMiddleware:
                     raise TokenError("Access token expired")
                 request.META['HTTP_AUTHORIZATION'] = f'Bearer {access_token}'
             except TokenError:
-                access_token = None # token expired, try refresh
+                access_token = None  # token expired, try refresh
 
         if not access_token and refresh_token:
             try:
