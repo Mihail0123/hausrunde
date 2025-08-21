@@ -67,6 +67,7 @@ class ReviewSerializer(serializers.ModelSerializer):
 
 class AdSerializer(serializers.ModelSerializer):
     owner = serializers.StringRelatedField(read_only=True)
+    owner_id = serializers.IntegerField(read_only=True)
     images = AdImageSerializer(many=True, read_only=True)
     average_rating = serializers.FloatField(read_only=True)
     reviews_count = serializers.IntegerField(read_only=True)
@@ -79,12 +80,14 @@ class AdSerializer(serializers.ModelSerializer):
             "price", "rooms", "housing_type",
             "area", "latitude", "longitude",
             "is_active", "is_demo",
-            "owner", "created_at", "updated_at",
+            "owner", "owner_id",
+            "created_at", "updated_at",
             "images",
             "average_rating", "reviews_count", "views_count",
         ]
         read_only_fields = [
-            "id", "owner", "created_at", "updated_at",
+            "id", "owner", "owner_id",
+            "created_at", "updated_at",
             "images", "average_rating", "reviews_count", "views_count",
         ]
 
@@ -125,19 +128,51 @@ class AdSerializer(serializers.ModelSerializer):
 
 
 class BookingSerializer(serializers.ModelSerializer):
-    tenant = serializers.StringRelatedField(read_only=True)
+    # Writable input: `ad`, `date_from`, `date_to`
+    # Read-only denormalized fields for UI convenience:
+    ad_id = serializers.IntegerField(read_only=True)
+    ad_title = serializers.CharField(source="ad.title", read_only=True)
+
+    # Tenant/Owner as objects {id, email} for cards/tables
+    tenant = serializers.SerializerMethodField(read_only=True)
+    owner = serializers.SerializerMethodField(read_only=True)
+
+    # Action flags based on current user role (tenant/owner) and status
+    can_cancel = serializers.SerializerMethodField(read_only=True)
+    can_cancel_quote = serializers.SerializerMethodField(read_only=True)
+    can_confirm = serializers.SerializerMethodField(read_only=True)
+    can_reject = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Booking
         fields = (
-            "id", "ad", "tenant",
+            "id",
+            "ad",              # input
+            "ad_id", "ad_title",
+            "tenant", "owner",
             "date_from", "date_to",
-            "status", "created_at"
+            "status", "created_at",
+            "can_cancel", "can_cancel_quote", "can_confirm", "can_reject",
         )
-        read_only_fields = ("id", "tenant", "status", "created_at")
+        read_only_fields = (
+            "id", "tenant", "owner",
+            "ad_id", "ad_title",
+            "status", "created_at",
+            "can_cancel", "can_cancel_quote", "can_confirm", "can_reject",
+        )
 
+    # -------------------------
+    # Validation (server-side)
+    # -------------------------
     def validate(self, data):
-        """Global validation for booking creation and update."""
+        """
+        Global validation for booking create/update:
+        - required fields
+        - `date_from` >= tomorrow; `date_to` > `date_from`
+        - ad must be active
+        - tenant cannot book own ad
+        - no overlaps with existing PENDING/CONFIRMED
+        """
         request = self.context.get("request")
         user = getattr(request, "user", None)
 
@@ -157,23 +192,26 @@ class BookingSerializer(serializers.ModelSerializer):
         if errors:
             raise serializers.ValidationError(errors)
 
-        # Chronological order (min 1 night)
-        if date_from >= date_to:
-            errors["date_to"] = "`date_to` must be later than `date_from`."
+        # Chronology rules
+        today = date.today()
+        if date_from <= today:
+            errors["date_from"] = "Must be at least tomorrow."
+        if date_to <= date_from:
+            errors["date_to"] = "Must be greater than date_from."
 
         # Ad must be active
         if ad and not getattr(ad, "is_active", True):
-            errors["ad"] = "This ad is inactive and cannot be booked."
+            errors.setdefault("ad", "This ad is inactive and cannot be booked.")
 
         # Forbid booking own ad
         if user and getattr(ad, "owner_id", None) == getattr(user, "id", None):
             errors.setdefault("non_field_errors", []).append("You cannot book your own ad.")
 
-        # Prevent overlaps with existing PENDING/CONFIRMED bookings
+        # Prevent overlaps with existing CONFIRMED
         if ad and date_from and date_to:
             qs = Booking.objects.filter(
                 ad=ad,
-                status__in=[Booking.PENDING, Booking.CONFIRMED],
+                status=Booking.CONFIRMED,
                 date_from__lt=date_to,
                 date_to__gt=date_from,
             )
@@ -181,12 +219,53 @@ class BookingSerializer(serializers.ModelSerializer):
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
                 errors.setdefault("non_field_errors", []).append(
-                    "Selected dates overlap with an existing booking."
+                    "Selected dates overlap with an confirmed booking."
                 )
 
         if errors:
             raise serializers.ValidationError(errors)
         return data
+
+    # -------------------------
+    # Presentation helpers
+    # -------------------------
+    def get_tenant(self, obj):
+        t = getattr(obj, "tenant", None)
+        if not t:
+            return None
+        return {"id": t.id, "email": t.email}
+
+    def get_owner(self, obj):
+        ad = getattr(obj, "ad", None)
+        if not ad or not getattr(ad, "owner", None):
+            return None
+        return {"id": ad.owner.id, "email": ad.owner.email}
+
+    # Role helpers
+    def _is_tenant(self, obj, user):
+        return bool(user and obj.tenant_id == getattr(user, "id", None))
+
+    def _is_owner(self, obj, user):
+        ad_owner_id = getattr(getattr(obj, "ad", None), "owner_id", None)
+        return bool(user and ad_owner_id == getattr(user, "id", None))
+
+    # Action flags
+    def get_can_cancel(self, obj):
+        user = getattr(self.context.get("request"), "user", None)
+        return self._is_tenant(obj, user) and obj.status in (Booking.PENDING, Booking.CONFIRMED)
+
+    def get_can_cancel_quote(self, obj):
+        # Tenant can preview cancel-quote for PENDING or CONFIRMED (matches /cancel-quote/ view).
+        user = getattr(self.context.get("request"), "user", None)
+        return self._is_tenant(obj, user) and obj.status in (Booking.PENDING, Booking.CONFIRMED)
+
+    def get_can_confirm(self, obj):
+        user = getattr(self.context.get("request"), "user", None)
+        return self._is_owner(obj, user) and obj.status == Booking.PENDING
+
+    def get_can_reject(self, obj):
+        user = getattr(self.context.get("request"), "user", None)
+        return self._is_owner(obj, user) and obj.status == Booking.PENDING
 
 
 class AvailabilityItemSerializer(serializers.Serializer):

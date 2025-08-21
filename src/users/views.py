@@ -257,3 +257,10 @@ class DebugTokenView(APIView):
                 data['refresh_valid'] = False
 
         return Response(data)
+
+
+class MeView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        return Response(CustomUserSerializer(request.user).data)
