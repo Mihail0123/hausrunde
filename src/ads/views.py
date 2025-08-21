@@ -633,29 +633,27 @@ class ReviewViewSet(viewsets.ModelViewSet):
     def perform_create(self, serializer):
         """
         Bind review to the latest eligible booking (CONFIRMED and already finished)
-        that has no review yet. This keeps the public API simple: {ad, rating, text}.
+        without an existing review. Public API stays simple: {ad, rating, comment|text}.
         """
         user = self.request.user
-        ad = serializer.validated_data.get('ad')
+        ad = serializer.validated_data.get("ad")
         if not ad:
             raise ValidationError({"ad": "This field is required."})
 
         today = timezone.now().date()
 
-        # Pick the most recent finished CONFIRMED booking without a review
+        # Pick the most recent finished CONFIRMED booking of this user for this ad
         booking = (
             Booking.objects
             .filter(ad=ad, tenant=user, status=Booking.CONFIRMED, date_to__lt=today)
             .filter(review__isnull=True)
-            .order_by('-date_to')
+            .order_by("-date_to")
             .first()
         )
-
         if not booking:
-            # Either there is no past CONFIRMED booking, or it is already reviewed.
-            raise ValidationError({"detail": "You can review only after your confirmed booking has finished."})
+            raise ValidationError(
+                {"detail": "You can review only after your confirmed booking has finished and is not yet reviewed."})
 
-        # Denormalize ad/tenant to keep annotations and permissions simple
         serializer.save(tenant=user, ad=ad, booking=booking)
 
 

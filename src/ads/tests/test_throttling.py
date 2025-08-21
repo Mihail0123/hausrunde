@@ -1,23 +1,39 @@
+# src/ads/tests/test_throttling.py
+from django.conf import settings
+from django.core.cache import cache
 from django.test import override_settings
-from rest_framework.test import APITestCase
 from django.urls import reverse
+from rest_framework.test import APITestCase
+from django.contrib.auth import get_user_model
 
-TEST_THROTTLE_RATES = {
-    'ads_list': '2/min',
-    'ads_availability': '2/min',
-    'auth_login': '2/min',
+from src.ads.models import Ad
+
+# For tests we only *lower the rates* for the specific scopes we hit.
+# We must MERGE into existing REST_FRAMEWORK so that throttle classes remain enabled.
+TEST_RATES = {
+    "ads_list": "2/min",
+    "ads_availability": "2/min",
+    "auth_login": "2/min",
 }
 
-@override_settings(
-    REST_FRAMEWORK={
-        'DEFAULT_THROTTLE_RATES': TEST_THROTTLE_RATES
-    }
-)
+RF_MERGED = {
+    **settings.REST_FRAMEWORK,
+    "DEFAULT_THROTTLE_RATES": {
+        **settings.REST_FRAMEWORK.get("DEFAULT_THROTTLE_RATES", {}),
+        **TEST_RATES,
+    },
+}
+
+
+@override_settings(REST_FRAMEWORK=RF_MERGED)
 class AdsThrottleTests(APITestCase):
+    def setUp(self):
+        # Important: clear LocMem throttle cache to isolate test runs.
+        cache.clear()
 
     def test_ads_list_throttling(self):
-        # Используем namespace "ads" и имя "ad-list" из списка URL
-        url = reverse('ads:ad-list')
+        """Third anonymous GET to ad-list should be throttled (429)."""
+        url = reverse("ads:ad-list")
         r1 = self.client.get(url)
         self.assertEqual(r1.status_code, 200)
         r2 = self.client.get(url)
@@ -26,23 +42,20 @@ class AdsThrottleTests(APITestCase):
         self.assertEqual(r3.status_code, 429)
 
     def test_availability_throttling(self):
-        from src.ads.models import Ad
-        from django.contrib.auth import get_user_model
-
+        """Third anonymous GET to ad-availability should be throttled (429)."""
         User = get_user_model()
-        owner = User.objects.create_user(email='owner@example.com', password='x')
+        owner = User.objects.create_user(email="owner@example.com", password="x")
         ad = Ad.objects.create(
-            title='Test Ad',
-            description='desc',
-            location='Berlin',
+            title="Test Ad",
+            description="desc",
+            location="Berlin",
             price=100,
             rooms=1,
-            housing_type='apartment',
+            housing_type="apartment",
             is_active=True,
             owner=owner,
         )
-
-        url = reverse('ads:ad-availability', args=[ad.id])
+        url = reverse("ads:ad-availability", args=[ad.id])
         r1 = self.client.get(url)
         self.assertEqual(r1.status_code, 200)
         r2 = self.client.get(url)
@@ -50,22 +63,21 @@ class AdsThrottleTests(APITestCase):
         r3 = self.client.get(url)
         self.assertEqual(r3.status_code, 429)
 
-@override_settings(
-    REST_FRAMEWORK={
-        'DEFAULT_THROTTLE_RATES': TEST_THROTTLE_RATES
-    }
-)
+
+@override_settings(REST_FRAMEWORK=RF_MERGED)
 class AuthThrottleTests(APITestCase):
+    def setUp(self):
+        # Isolate per-test throttle counters.
+        cache.clear()
 
     def test_login_throttling(self):
-        url = reverse('token_obtain_pair')
-        data = {
-            "email": "nonexistent@example.com",
-            "password": "wrongpassword",
-        }
-        r1 = self.client.post(url, data)
-        self.assertEqual(r1.status_code, 401)
-        r2 = self.client.post(url, data)
+        """Third POST with wrong creds should be throttled (429) on auth_login scope."""
+        url = reverse("token_obtain_pair")
+        payload = {"email": "nonexistent@example.com", "password": "wrongpassword"}
+
+        r1 = self.client.post(url, payload)
+        self.assertEqual(r1.status_code, 401)  # wrong creds
+        r2 = self.client.post(url, payload)
         self.assertEqual(r2.status_code, 401)
-        r3 = self.client.post(url, data)
+        r3 = self.client.post(url, payload)
         self.assertEqual(r3.status_code, 429)

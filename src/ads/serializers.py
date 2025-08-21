@@ -52,21 +52,34 @@ class AdImageUploadSerializer(serializers.Serializer):
 
 
 class ReviewSerializer(serializers.ModelSerializer):
-    # Read-only author name for convenience
+    # Show author in responses
     tenant = serializers.StringRelatedField(read_only=True)
+    # Accept both `text` and a friendlier alias `comment` on input
+    comment = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Review
-        # booking is not exposed in the public API; we bind it server-side
-        fields = ('id', 'ad', 'tenant', 'rating', 'text', 'created_at', 'updated_at')
-        read_only_fields = ('id', 'tenant', 'created_at', 'updated_at')
+        # We keep `text` as the canonical field in responses
+        fields = ("id", "ad", "tenant", "rating", "text", "comment", "created_at", "updated_at")
+        read_only_fields = ("id", "tenant", "created_at", "updated_at")
 
     def validate_rating(self, value):
-        # Keep server-side validation strict
         v = int(value)
         if not (1 <= v <= 5):
             raise serializers.ValidationError("Rating must be between 1 and 5.")
         return v
+
+    def validate(self, attrs):
+        """
+        Normalize payload:
+        - if `comment` is provided and `text` is empty, use it as `text`.
+        """
+        text = attrs.get("text")
+        comment = attrs.pop("comment", None)
+        if (not text) and (comment is not None):
+            attrs["text"] = comment
+        return attrs
+
 
 
 
