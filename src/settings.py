@@ -166,6 +166,15 @@ AD_IMAGE_MAX_HEIGHT = 6000         # max height in pixels
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# --- Auth cookie flags (used by login/register/middleware) ---
+# For local dev over HTTP keep SECURE=False; in production set to True (HTTPS only).
+AUTH_COOKIE_SECURE = not DEBUG
+# 'Lax' is a good default; use 'Strict' if frontend is same-site and you want stronger CSRF posture.
+AUTH_COOKIE_SAMESITE = 'Lax'
+# Override if you need a specific cookie domain/path; by default use current host and root path.
+AUTH_COOKIE_DOMAIN = None
+AUTH_COOKIE_PATH = '/'
+
 CACHES = {
     "default": {
         "BACKEND": "django.core.cache.backends.locmem.LocMemCache",

@@ -1,4 +1,5 @@
 from django.utils.timezone import now
+from django.conf import settings
 from rest_framework_simplejwt.tokens import RefreshToken, AccessToken
 from rest_framework_simplejwt.exceptions import TokenError
 
@@ -36,9 +37,10 @@ class JWTAuthCookieMiddleware:
                     key='access_token',
                     value=str(new_access),
                     httponly=True,
-                    secure=False,
-                    samesite='Lax',
-                    path='/',
+                    secure=getattr(settings, 'AUTH_COOKIE_SECURE', not settings.DEBUG),
+                    samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax'),
+                    path=getattr(settings, 'AUTH_COOKIE_PATH', '/'),
+                    domain=getattr(settings, 'AUTH_COOKIE_DOMAIN', None),
                     expires=new_access['exp'],
                 )
                 return response

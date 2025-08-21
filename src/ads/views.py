@@ -1002,7 +1002,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking = self.get_object()
         # only ad owner can confirm/reject this booking
         if booking.ad.owner_id != request.user.id:
-            raise PermissionDenied("Only the booking owner can confirm this booking.")
+            raise PermissionDenied("Only the ad owner can confirm this booking.")
         booking.status = Booking.CONFIRMED
         booking.save(update_fields=['status'])
         # auto-cancel overlapping pending bookings
@@ -1027,7 +1027,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         booking = self.get_object()
         # only ad owner can confirm/reject this booking
         if booking.ad.owner_id != request.user.id:
-            raise PermissionDenied("Only the booking owner can reject this booking.")
+            raise PermissionDenied("Only the ad owner can reject this booking.")
         booking.status = Booking.CANCELLED
         booking.save(update_fields=['status'])
         return Response({'detail': 'Rejected'}, status=status.HTTP_200_OK)

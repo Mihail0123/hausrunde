@@ -43,12 +43,32 @@ class AdImageCaptionUpdateSerializer(serializers.ModelSerializer):
 
 class AdImageUploadSerializer(serializers.Serializer):
     """
-    Not ModelSerializer, to receive:
-      - single file to `image`
-      - multiple files to `images` (request.FILES.getlist)
+    Supports either a single 'image' or multiple 'images' files.
+    View will read request.FILES.getlist('images'); this serializer only
+    documents the shape for OpenAPI and enforces "at least one file".
     """
-    image = serializers.ImageField(required=False, allow_null=True)
-    caption = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    image = serializers.ImageField(required=False)
+    images = serializers.ListField(
+        child=serializers.ImageField(),
+        required=False,
+        write_only=True,
+        allow_empty=True,
+    )
+    caption = serializers.CharField(required=False, allow_blank=True, max_length=200)
+
+    def validate(self, attrs):
+        request = self.context.get('request')
+        # Accept if single 'image' provided…
+        if attrs.get('image'):
+            return attrs
+        # …or if any files came as 'images'
+        files = []
+        if request is not None:
+            files = request.FILES.getlist('images')
+        images = attrs.get('images') or files
+        if not images:
+            raise serializers.ValidationError({'images': 'Provide at least one image.'})
+        return attrs
 
 
 class ReviewSerializer(serializers.ModelSerializer):
@@ -237,7 +257,7 @@ class BookingSerializer(serializers.ModelSerializer):
                 qs = qs.exclude(pk=self.instance.pk)
             if qs.exists():
                 errors.setdefault("non_field_errors", []).append(
-                    "Selected dates overlap with an confirmed booking."
+                    "Selected dates overlap with a confirmed booking."
                 )
 
         if errors:

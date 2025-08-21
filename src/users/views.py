@@ -1,3 +1,4 @@
+from django.conf import settings
 from datetime import datetime, timezone
 from rest_framework.generics import CreateAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
@@ -98,19 +99,21 @@ class RegisterView(CreateAPIView):
             key='access_token',
             value=str(access_token),
             httponly=True,
-            secure=False,
-            samesite='Lax',
+            secure=getattr(settings, 'AUTH_COOKIE_SECURE', not settings.DEBUG),
+            samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax'),
             expires=access_expiry,
-            path='/',
+            path=getattr(settings, 'AUTH_COOKIE_PATH', '/'),
+            domain=getattr(settings, 'AUTH_COOKIE_DOMAIN', None),
         )
         response.set_cookie(
             key='refresh_token',
             value=str(refresh),
             httponly=True,
-            secure=False,
-            samesite='Lax',
+            secure=getattr(settings, 'AUTH_COOKIE_SECURE', not settings.DEBUG),
+            samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax'),
             expires=refresh_expiry,
-            path='/',
+            path=getattr(settings, 'AUTH_COOKIE_PATH', '/'),
+            domain=getattr(settings, 'AUTH_COOKIE_DOMAIN', None),
         )
         return response
 
@@ -175,19 +178,21 @@ class LoginView(APIView):
                 key='access_token',
                 value=str(access_token),
                 httponly=True,
-                secure=False,
-                samesite='Lax',
+                secure=getattr(settings, 'AUTH_COOKIE_SECURE', not settings.DEBUG),
+                samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax'),
                 expires=access_expiry,
-                path='/',
+                path=getattr(settings, 'AUTH_COOKIE_PATH', '/'),
+                domain=getattr(settings, 'AUTH_COOKIE_DOMAIN', None),
             )
             response.set_cookie(
                 key='refresh_token',
                 value=str(refresh),
                 httponly=True,
-                secure=False,
-                samesite='Lax',
+                secure=getattr(settings, 'AUTH_COOKIE_SECURE', not settings.DEBUG),
+                samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax'),
                 expires=refresh_expiry,
-                path='/',
+                path=getattr(settings, 'AUTH_COOKIE_PATH', '/'),
+                domain=getattr(settings, 'AUTH_COOKIE_DOMAIN', None),
             )
             return response
 
