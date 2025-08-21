@@ -1,6 +1,4 @@
-# src/ads/tests/test_throttling.py
 from django.conf import settings
-from django.core.cache import cache
 from django.test import override_settings
 from django.urls import reverse
 from rest_framework.test import APITestCase
@@ -27,9 +25,6 @@ RF_MERGED = {
 
 @override_settings(REST_FRAMEWORK=RF_MERGED)
 class AdsThrottleTests(APITestCase):
-    def setUp(self):
-        # Important: clear LocMem throttle cache to isolate test runs.
-        cache.clear()
 
     def test_ads_list_throttling(self):
         """Third anonymous GET to ad-list should be throttled (429)."""
@@ -66,9 +61,6 @@ class AdsThrottleTests(APITestCase):
 
 @override_settings(REST_FRAMEWORK=RF_MERGED)
 class AuthThrottleTests(APITestCase):
-    def setUp(self):
-        # Isolate per-test throttle counters.
-        cache.clear()
 
     def test_login_throttling(self):
         """Third POST with wrong creds should be throttled (429) on auth_login scope."""

@@ -30,13 +30,8 @@ from .permissions import (
 )
 from .pagination import AdPagination
 from .validators import validate_image_file
+from .throttling import ScopedRateThrottleIsolated
 
-class ScopedRateThrottleIsolated(ScopedRateThrottle):
-    def get_cache_key(self, request, view):
-        key = super().get_cache_key(request, view)
-        if key is None:
-            return None
-        return f"{key}:{self.get_rate() or 'none'}"
 
 VIEW_DEDUP_HOURS = 6
 
@@ -123,7 +118,7 @@ class AdFilter(df.FilterSet):
 
     def filter_available(self, queryset, name, value):
         """
-        Exclude ads having any PENDING/CONFIRMED booking overlapping the requested window.
+        Exclude ads having any CONFIRMED booking overlapping the requested window.
         Overlap condition: existing.date_from <= req_end AND existing.date_to >= req_start
         """
         # Prevent applying twice (method bound to two fields).
@@ -136,7 +131,7 @@ class AdFilter(df.FilterSet):
 
         conflict = Booking.objects.filter(
             ad=OuterRef('pk'),
-            status__in=[Booking.PENDING, Booking.CONFIRMED],
+            status=Booking.CONFIRMED,
             date_from__lte=end,
             date_to__gte=start,
         )
@@ -239,13 +234,13 @@ class AdFilter(df.FilterSet):
             OpenApiParameter(
                 name="available_from",
                 type=OpenApiTypes.DATE,
-                description="Exclude ads that have PENDING/CONFIRMED bookings overlapping this window start.",
+                description="Exclude ads that have CONFIRMED bookings overlapping this window start.",
                 examples=[OpenApiExample("From 2025-09-01", value="2025-09-01")],
             ),
             OpenApiParameter(
                 name="available_to",
                 type=OpenApiTypes.DATE,
-                description="Exclude ads that have PENDING/CONFIRMED bookings overlapping this window end.",
+                description="Exclude ads that have CONFIRMED bookings overlapping this window end.",
                 examples=[OpenApiExample("To 2025-09-10", value="2025-09-10")],
             ),
             OpenApiParameter(
@@ -851,7 +846,7 @@ class AdImageViewSet(viewsets.ModelViewSet):
             "Authenticated users only.\n\n"
             "- Cannot book your own ad\n"
             "- Cannot book inactive ads\n"
-            "- Dates must not overlap with existing confirmed/pending bookings"
+            "- Dates must not overlap with existing confirmed bookings"
         ),
         examples=[
             OpenApiExample(
@@ -920,7 +915,7 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "- Free if there are >= 3 full days until start\n"
                 "- If < 3 days remain: 20% of total per day that falls inside the 3-day window (20/40/60%)\n"
                 "- If the start has already begun: no refund (100% fee)\n\n"
-                "Tenant only. Allowed statuses: PENDING, CONFIRMED."
+                "Tenant only. Allowed statuses: CONFIRMED."
         ),
         responses={200: OpenApiResponse(description="Cancellation quote as JSON")}
     )
@@ -937,10 +932,16 @@ class BookingViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_400_BAD_REQUEST)
 
         quote = _compute_cancel_quote(booking)
-        return Response(quote, status=status.HTTP_200_OK)
+        if booking.status == Booking.PENDING:
+            quote.update({
+                "fee_percent": 0.0,
+                "fee_amount": 0.0,
+                "message": "No cancellation fee for PENDING bookings.",
+            })
+        return Response(quote, status=200)
 
     @extend_schema(
-        summary="Cancel booking (tenant only, with fee policy)",
+        summary="Cancel booking (tenant only, with fee policy if already confirmed)",
         description=(
                 "Tenant only. Cancellation is always allowed, but the fee applies as follows:\n"
                 "- Free if there are >= 3 full days until start\n"
@@ -974,6 +975,12 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         # Compute the quote (for UI and possible logging)
         quote = _compute_cancel_quote(booking)
+        if booking.status == Booking.PENDING:
+            quote.update({
+                "fee_percent": 0.0,
+                "fee_amount": 0.0,
+                "message": "No cancellation fee for PENDING bookings.",
+            })
 
         # Apply cancellation
         booking.status = Booking.CANCELLED
@@ -1001,7 +1008,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         # auto-cancel overlapping pending bookings
         Booking.objects.filter(
             ad=booking.ad,
-            status='PENDING',
+            status=Booking.PENDING,
             date_from__lte=booking.date_to,
             date_to__gte=booking.date_from
         ).exclude(pk=booking.pk).update(status=Booking.CANCELLED)

@@ -18,16 +18,16 @@ from drf_spectacular.utils import extend_schema, OpenApiResponse, extend_schema_
 
 from .models import CustomUser
 from .serializers import CustomUserSerializer, RegistrationSerializer, LoginSerializer
-from ..ads.views import ScopedRateThrottleIsolated
+from src.ads.throttling import ScopedRateThrottleIsolated
 
 
 class ThrottledTokenObtainPairView(BaseTokenObtainPairView):
-    throttle_classes = (ScopedRateThrottle,)
+    throttle_classes = (ScopedRateThrottleIsolated,)
     throttle_scope = 'auth_login'
 
 
 class ThrottledTokenRefreshView(BaseTokenRefreshView):
-    throttle_classes = (ScopedRateThrottle,)
+    throttle_classes = (ScopedRateThrottleIsolated,)
     throttle_scope = 'auth_login'
 
 

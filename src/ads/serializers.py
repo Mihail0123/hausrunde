@@ -189,7 +189,7 @@ class BookingSerializer(serializers.ModelSerializer):
         - `date_from` >= tomorrow; `date_to` > `date_from`
         - ad must be active
         - tenant cannot book own ad
-        - no overlaps with existing PENDING/CONFIRMED
+        - no overlaps with existing CONFIRMED
         """
         request = self.context.get("request")
         user = getattr(request, "user", None)
