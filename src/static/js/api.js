@@ -1,160 +1,182 @@
 // static/js/api.js
-import { API, hAuth } from "./config.js";
+import { API, hAuth, getAccess, setAccess } from "./config.js";
 
-// ---- helpers
-async function handle(r, urlLabel = "") {
-  if (r.ok) return r.json();
-  const body = await r.text().catch(() => "");
-  throw new Error(`${urlLabel}${urlLabel ? " " : ""}${r.status} ${r.statusText}\n${body}`);
-}
-
-// ---- Auth
-export async function login(email, password){
-  const r = await fetch(`${API}/auth/token/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password })
-  });
-  return handle(r, "AUTH");
-}
-export async function register(payload){
-  const r = await fetch(`${API}/auth/register/`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  return handle(r, "REGISTER");
-}
-
-// ---- Ads
-export async function fetchAds(params){
+// --------------------- helpers ---------------------
+function buildQS(params = {}) {
   const qs = new URLSearchParams();
-  for (const [k,v] of Object.entries(params || {})) {
+  for (const [k, v] of Object.entries(params)) {
     if (v === undefined || v === null || v === "") continue;
     qs.append(k, v);
   }
-  const url = `${API}/ads/?${qs.toString()}`;
-  const r = await fetch(url, { headers: hAuth() });
-  if (!r.ok) {
-    const body = await r.text().catch(() => "");
-    throw new Error(`ADS ${r.status} at ${url}\n${body}`);
-  }
-  return r.json();
-}
-export async function fetchAd(id){
-  const r = await fetch(`${API}/ads/${id}/`, { headers: hAuth() });
-  return handle(r, "AD");
-}
-export async function createAd(payload){
-  const r = await fetch(`${API}/ads/`, {
-    method: "POST",
-    headers: { ...hAuth(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  return handle(r, "AD CREATE");
-}
-export async function patchAd(id, payload){
-  const r = await fetch(`${API}/ads/${id}/`, {
-    method: "PATCH",
-    headers: { ...hAuth(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  return handle(r, "AD PATCH");
+  return qs.toString();
 }
 
-// ---- Images
-export async function uploadAdImages(adId, files, caption=""){
-  const fd = new FormData();
-  for (const f of files) fd.append("images", f);
-  if (caption) fd.append("caption", caption);
-  const r = await fetch(`${API}/ads/${adId}/images/`, {
-    method: "POST",
-    headers: { ...hAuth() },
-    body: fd
-  });
-  return handle(r, "IMG UPLOAD");
+async function handle(r, label = "", url = "") {
+  if (r.ok) {
+    // 204 No Content
+    if (r.status === 204) return true;
+    try { return await r.json(); }
+    catch { return true; }
+  }
+  let body = "";
+  try { body = await r.text(); } catch {}
+  // автоочистка access, если он протух/невалиден
+  if (r.status === 401 && /token_not_valid|expired/i.test(body)) {
+    setAccess(null);
+  }
+  throw new Error(`${label ? label + " " : ""}${r.status} ${r.statusText}${url ? " at " + url : ""}\n${body}`);
 }
-export async function replaceImage(imageId, file, caption=""){
+
+// --------------------- AUTH ------------------------
+export async function login(email, password) {
+  const url = `${API}/auth/token/`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, password }),
+  });
+  return handle(r, "AUTH", url);
+}
+
+export async function register(payload) {
+  const url = `${API}/auth/register/`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handle(r, "REGISTER", url);
+}
+
+// --------------------- ADS (PUBLIC) ----------------
+export async function fetchAds(params = {}) {
+  const qs = buildQS(params);
+  const url = `${API}/ads/?${qs}`;
+  const r = await fetch(url); // без Authorization
+  return handle(r, "ADS", url);
+}
+
+export async function fetchAd(id) {
+  const url = `${API}/ads/${id}/`;
+  const r = await fetch(url); // без Authorization
+  return handle(r, "AD", url);
+}
+
+// --------------------- ADS (AUTH) ------------------
+// использовать для mine=true и любых защищённых операций
+export async function fetchAdsAuth(params = {}) {
+  const qs = buildQS(params);
+  const url = `${API}/ads/?${qs}`;
+  const r = await fetch(url, { headers: hAuth() });
+  return handle(r, "ADS AUTH", url);
+}
+
+export async function createAd(payload) {
+  const url = `${API}/ads/`;
+  const r = await fetch(url, {
+    method: "POST",
+    headers: { ...hAuth(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handle(r, "AD CREATE", url);
+}
+
+export async function patchAd(id, payload) {
+  const url = `${API}/ads/${id}/`;
+  const r = await fetch(url, {
+    method: "PATCH",
+    headers: { ...hAuth(), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return handle(r, "AD PATCH", url);
+}
+
+// --------------------- IMAGES ----------------------
+export async function uploadAdImages(adId, files, caption = "") {
+  const url = `${API}/ads/${adId}/images/`;
+  const fd = new FormData();
+  for (const f of files || []) fd.append("images", f);
+  if (caption) fd.append("caption", caption);
+  const r = await fetch(url, { method: "POST", headers: { ...hAuth() }, body: fd });
+  return handle(r, "IMG UPLOAD", url);
+}
+
+export async function replaceImage(imageId, file, caption = "") {
+  const url = `${API}/ad-images/${imageId}/replace/`;
   const fd = new FormData();
   fd.append("image", file);
   if (caption) fd.append("caption", caption);
-  const r = await fetch(`${API}/ad-images/${imageId}/replace/`, {
-    method: "POST",
-    headers: { ...hAuth() },
-    body: fd
-  });
-  return handle(r, "IMG REPLACE");
-}
-export async function deleteImage(imageId){
-  const r = await fetch(`${API}/ad-images/${imageId}/`, {
-    method: "DELETE",
-    headers: hAuth()
-  });
-  if (!r.ok) {
-    const body = await r.text().catch(()=> "");
-    throw new Error(`IMG DELETE ${r.status}\n${body}`);
-  }
-  return true;
+  const r = await fetch(url, { method: "POST", headers: { ...hAuth() }, body: fd });
+  return handle(r, "IMG REPLACE", url);
 }
 
-// ---- Bookings
-export async function fetchBookings(){
-  const r = await fetch(`${API}/bookings/`, { headers: hAuth() });
-  return handle(r, "BOOKINGS");
+export async function deleteImage(imageId) {
+  const url = `${API}/ad-images/${imageId}/`;
+  const r = await fetch(url, { method: "DELETE", headers: hAuth() });
+  return handle(r, "IMG DELETE", url);
 }
-export async function createBooking(payload){
-  const r = await fetch(`${API}/bookings/`, {
+
+// --------------------- BOOKINGS (AUTH) -------------
+export async function fetchBookings() {
+  const url = `${API}/bookings/`;
+  const r = await fetch(url, { headers: hAuth() });
+  return handle(r, "BOOKINGS", url);
+}
+
+export async function createBooking(payload) {
+  const url = `${API}/bookings/`;
+  const r = await fetch(url, {
     method: "POST",
     headers: { ...hAuth(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
-  return handle(r, "BOOK CREATE");
-}
-export async function cancelQuote(bookingId){
-  const r = await fetch(`${API}/bookings/${bookingId}/cancel-quote/`, { headers: hAuth() });
-  return handle(r, "BOOK QUOTE");
-}
-export async function cancelBooking(bookingId){
-  const r = await fetch(`${API}/bookings/${bookingId}/cancel/`, { method: "POST", headers: hAuth() });
-  if (!r.ok) {
-    const body = await r.text().catch(()=> "");
-    throw new Error(`BOOK CANCEL ${r.status}\n${body}`);
-  }
-  return true;
-}
-export async function confirmBooking(bookingId){
-  const r = await fetch(`${API}/bookings/${bookingId}/confirm/`, { method: "POST", headers: hAuth() });
-  if (!r.ok) {
-    const body = await r.text().catch(()=> "");
-    throw new Error(`BOOK CONFIRM ${r.status}\n${body}`);
-  }
-  return true;
-}
-export async function rejectBooking(bookingId){
-  const r = await fetch(`${API}/bookings/${bookingId}/reject/`, { method: "POST", headers: hAuth() });
-  if (!r.ok) {
-    const body = await r.text().catch(()=> "");
-    throw new Error(`BOOK REJECT ${r.status}\n${body}`);
-  }
-  return true;
+  return handle(r, "BOOK CREATE", url);
 }
 
-// ---- Reviews
-export async function fetchReviews(adId){
-  const r = await fetch(`${API}/reviews/?ad=${adId}`, { headers: hAuth() });
-  return handle(r, "REVIEWS");
+export async function cancelQuote(bookingId) {
+  const url = `${API}/bookings/${bookingId}/cancel-quote/`;
+  const r = await fetch(url, { headers: hAuth() });
+  return handle(r, "BOOK QUOTE", url);
 }
-export async function createReview(payload){
-  const r = await fetch(`${API}/reviews/`, {
+
+export async function cancelBooking(bookingId) {
+  const url = `${API}/bookings/${bookingId}/cancel/`;
+  const r = await fetch(url, { method: "POST", headers: hAuth() });
+  return handle(r, "BOOK CANCEL", url);
+}
+
+export async function confirmBooking(bookingId) {
+  const url = `${API}/bookings/${bookingId}/confirm/`;
+  const r = await fetch(url, { method: "POST", headers: hAuth() });
+  return handle(r, "BOOK CONFIRM", url);
+}
+
+export async function rejectBooking(bookingId) {
+  const url = `${API}/bookings/${bookingId}/reject/`;
+  const r = await fetch(url, { method: "POST", headers: hAuth() });
+  return handle(r, "BOOK REJECT", url);
+}
+
+// --------------------- REVIEWS (обычно AUTH) -------
+export async function fetchReviews(adId) {
+  const url = `${API}/reviews/?ad=${encodeURIComponent(adId)}`;
+  const r = await fetch(url, { headers: hAuth() });
+  return handle(r, "REVIEWS", url);
+}
+
+export async function createReview(payload) {
+  const url = `${API}/reviews/`;
+  const r = await fetch(url, {
     method: "POST",
     headers: { ...hAuth(), "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
+    body: JSON.stringify(payload),
   });
-  return handle(r, "REVIEW CREATE");
+  return handle(r, "REVIEW CREATE", url);
 }
 
-// ---- Search analytics
-export async function topSearches(limit=10){
-  const r = await fetch(`${API}/search/top/?limit=${limit}`, { headers: hAuth() });
-  return handle(r, "TOP SEARCHES");
+// --------------------- SEARCH ANALYTICS (PUBLIC) ---
+export async function topSearches(limit = 10) {
+  const url = `${API}/search/top/?limit=${encodeURIComponent(limit)}`;
+  const r = await fetch(url); // без Authorization
+  return handle(r, "TOP SEARCHES", url);
 }
