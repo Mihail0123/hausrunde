@@ -631,27 +631,32 @@ class ReviewViewSet(viewsets.ModelViewSet):
         return super().get_permissions()
 
     def perform_create(self, serializer):
+        """
+        Bind review to the latest eligible booking (CONFIRMED and already finished)
+        that has no review yet. This keeps the public API simple: {ad, rating, text}.
+        """
         user = self.request.user
         ad = serializer.validated_data.get('ad')
         if not ad:
             raise ValidationError({"ad": "This field is required."})
 
-        # unique per (tenant, ad)
-        if Review.objects.filter(ad=ad, tenant=user).exists():
-            raise ValidationError({"detail": "You have already reviewed this ad."})
-
-        # must have a CONFIRMED booking ended in the past
         today = timezone.now().date()
-        has_past_confirmed = Booking.objects.filter(
-            ad=ad,
-            tenant=user,
-            status=Booking.CONFIRMED,
-            date_to__lt=today
-        ).exists()
-        if not has_past_confirmed:
+
+        # Pick the most recent finished CONFIRMED booking without a review
+        booking = (
+            Booking.objects
+            .filter(ad=ad, tenant=user, status=Booking.CONFIRMED, date_to__lt=today)
+            .filter(review__isnull=True)
+            .order_by('-date_to')
+            .first()
+        )
+
+        if not booking:
+            # Either there is no past CONFIRMED booking, or it is already reviewed.
             raise ValidationError({"detail": "You can review only after your confirmed booking has finished."})
 
-        serializer.save(tenant=user)
+        # Denormalize ad/tenant to keep annotations and permissions simple
+        serializer.save(tenant=user, ad=ad, booking=booking)
 
 
 # Helper: cancellation quote calculator (module-level, no indent)

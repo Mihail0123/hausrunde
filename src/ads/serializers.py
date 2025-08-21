@@ -52,17 +52,22 @@ class AdImageUploadSerializer(serializers.Serializer):
 
 
 class ReviewSerializer(serializers.ModelSerializer):
+    # Read-only author name for convenience
     tenant = serializers.StringRelatedField(read_only=True)
 
     class Meta:
         model = Review
+        # booking is not exposed in the public API; we bind it server-side
         fields = ('id', 'ad', 'tenant', 'rating', 'text', 'created_at', 'updated_at')
         read_only_fields = ('id', 'tenant', 'created_at', 'updated_at')
 
     def validate_rating(self, value):
-        if not (1 <= int(value) <= 5):
+        # Keep server-side validation strict
+        v = int(value)
+        if not (1 <= v <= 5):
             raise serializers.ValidationError("Rating must be between 1 and 5.")
-        return value
+        return v
+
 
 
 class AdSerializer(serializers.ModelSerializer):
