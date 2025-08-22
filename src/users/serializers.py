@@ -8,7 +8,8 @@ from .models import CustomUser
 class RegistrationSerializer(serializers.ModelSerializer):
     """Registration payload -> creates a user and hashes password."""
     password = serializers.CharField(write_only=True, required=True, style={'input_type': 'password'})
-    phone_number = serializers.CharField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+
 
     class Meta:
         model = CustomUser
@@ -36,7 +37,8 @@ class RegistrationSerializer(serializers.ModelSerializer):
 
 class CustomUserSerializer(serializers.ModelSerializer):
     """Representation of a user; staff/active are read-only for API clients."""
-    phone_number = serializers.CharField(required=False, allow_blank=True)
+    phone_number = serializers.CharField(required=False, allow_blank=True, max_length=32)
+
 
     class Meta:
         model = CustomUser

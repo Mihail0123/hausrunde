@@ -1,5 +1,7 @@
+import logging
 from django.db.models import Q, Avg, Count, Exists, OuterRef
 from django.http import JsonResponse
+from django.shortcuts import get_object_or_404
 from django_filters import rest_framework as df
 from rest_framework import viewsets, permissions, filters, status
 from rest_framework.decorators import action
@@ -34,6 +36,8 @@ from .throttling import ScopedRateThrottleIsolated
 
 
 VIEW_DEDUP_HOURS = 6
+
+logger = logging.getLogger(__name__)
 
 
 # -------------------------
@@ -248,7 +252,8 @@ class AdFilter(df.FilterSet):
                 type=OpenApiTypes.STR,
                 description=(
                     "Ordering: price, -price, created_at, -created_at, "
-                    "area, -area, reviews_count, -reviews_count, views_count, -views_count"
+                    "area, -area, reviews_count, -reviews_count, views_count, -views_count, "
+                    "average_rating, -average_rating"
                 ),
                 examples=[
                     OpenApiExample("Cheapest first", value="price"),
@@ -379,23 +384,24 @@ class AdViewSet(viewsets.ModelViewSet):
     def list(self, request, *args, **kwargs):
         response = super().list(request, *args, **kwargs)
         try:
-            params = request.query_params
-            if params:
-                q = params.get('q', '') or ''
-                # compact filters snapshot
-                filters_dict = {k: v for k, v in params.items()}
-                ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
-                ua = request.META.get('HTTP_USER_AGENT', '')
-                SearchQuery.objects.create(
-                    user=request.user if request.user.is_authenticated else None,
-                    q=q[:255],
-                    filters=filters_dict,
-                    ip=ip,
-                    user_agent=ua[:1000],
-                )
-        except Exception:
-            # logging must not break listing
-            pass
+            params = request.query_params  # QueryDict
+            q = (params.get('q') or '').strip()
+            if q:
+                filters_payload = dict(params.lists())
+                filters_payload.pop('page', None)
+                filters_payload.pop('page_size', None)
+                xff = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip()
+                ip = xff or request.META.get('REMOTE_ADDR') or None
+                data = {
+                    "q": q,
+                    "filters": filters_payload,
+                    "user": request.user if request.user.is_authenticated else None,
+                    "ip": ip,
+                    "user_agent": request.META.get("HTTP_USER_AGENT") or "",
+                }
+                SearchQuery.objects.create(**data)
+        except Exception as e:
+            logger.warning("search logging failed: %s", e)
         return response
 
     # --- view logging (retrieve) ---
@@ -439,6 +445,10 @@ class AdViewSet(viewsets.ModelViewSet):
         ctx = super().get_serializer_context()
         ctx['request'] = self.request
         return ctx
+
+    def perform_create(self, serializer):
+        """Bind owner to the authenticated user on create."""
+        serializer.save(owner=self.request.user)
 
     @extend_schema(
         summary="Upload image(s) for an ad (owner only)",
@@ -512,47 +522,6 @@ class AdViewSet(viewsets.ModelViewSet):
         return Response(AdImageSerializer(created, many=True, context={'request': request}).data,
                         status=status.HTTP_201_CREATED)
 
-    @extend_schema(
-        summary="Replace image file (owner only)",
-        description="Multipart: field `image` (required), optional `caption` to update together with file.",
-        request=None,
-        responses={
-            200: OpenApiResponse(response=AdImageSerializer),
-            400: OpenApiResponse(description="Invalid image or limit exceeded"),
-        },
-    )
-    @action(detail=True, methods=['post'], url_path='replace', parser_classes=[MultiPartParser])
-    def replace(self, request, pk=None):
-        """
-        Replace the image file for an existing AdImage. Owner-only.
-        Expects multipart with field 'image'; optional 'caption'.
-        """
-        obj = self.get_object()
-        if not self._is_owner(obj):
-            raise PermissionDenied("Only the ad owner can replace images.")
-
-        file = request.FILES.get('image')
-        if not file:
-            return Response({"detail": "Provide file in 'image' field (multipart)."},
-                            status=status.HTTP_400_BAD_REQUEST)
-
-        # validate new file before saving
-        try:
-            validate_image_file(file)
-        except DjangoValidationError as e:
-            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-
-        # replace file
-        obj.image = file
-
-        # optional caption update
-        caption = request.data.get('caption')
-        if caption is not None:
-            obj.caption = caption
-        obj.save(update_fields=['image', 'caption'] if caption is not None else ['image'])
-
-        # return fresh representation (with computed URLs)
-        return Response(AdImageSerializer(obj, context={'request': request}).data, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Ad availability (busy intervals)",
@@ -627,89 +596,43 @@ class ReviewViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """
-        Bind review to the latest eligible booking (CONFIRMED and already finished)
-        without an existing review. Public API stays simple: {ad, rating, comment|text}.
+        Allow two flows for backward compatibility with tests:
+        1) Client sends `booking`: we validate and use it.
+        2) Client sends only `ad`: bind to the latest finished CONFIRMED booking
+           of the current user for that ad that has no review yet.
         """
         user = self.request.user
-        ad = serializer.validated_data.get("ad")
-        if not ad:
-            raise ValidationError({"ad": "This field is required."})
+        today = timezone.localdate()
 
-        today = timezone.now().date()
-
-        # Pick the most recent finished CONFIRMED booking of this user for this ad
-        booking = (
-            Booking.objects
-            .filter(ad=ad, tenant=user, status=Booking.CONFIRMED, date_to__lt=today)
-            .filter(review__isnull=True)
-            .order_by("-date_to")
-            .first()
-        )
+        booking = serializer.validated_data.get("booking")
         if not booking:
-            raise ValidationError(
-                {"detail": "You can review only after your confirmed booking has finished and is not yet reviewed."})
+            # fallback by ad (tests post only `ad`)
+            ad_id = self.request.data.get("ad") or serializer.validated_data.get("ad")
+            if not ad_id:
+                raise ValidationError({"detail": "Provide 'ad' or 'booking'."})
+            ad = get_object_or_404(Ad, pk=ad_id) if not hasattr(ad_id, "id") else ad_id
+            booking = (
+                Booking.objects
+                .filter(ad=ad, tenant=user, status=Booking.CONFIRMED, date_to__lt=today, review__isnull=True)
+                .order_by("-date_to")
+                .first()
+            )
+            if not booking:
+                raise ValidationError({"detail": "You can review only after a finished CONFIRMED booking for this ad."})
+        else:
+            ad = booking.ad
+
+        # ownership/status/timing
+        if booking.tenant_id != user.id:
+            raise ValidationError({"detail": "Only the tenant can review this booking."})
+        if booking.status != Booking.CONFIRMED:
+            raise ValidationError({"detail": "Only CONFIRMED bookings can be reviewed."})
+        if booking.date_to >= today:
+            raise ValidationError({"detail": "You can review only after the stay has ended."})
+        if Review.objects.filter(booking=booking).exists():
+            raise ValidationError({"detail": "This booking is already reviewed."})
 
         serializer.save(tenant=user, ad=ad, booking=booking)
-
-
-# Helper: cancellation quote calculator (module-level, no indent)
-def _compute_cancel_quote(booking):
-    """
-    Policy:
-      - Free: if start is in >= 3 full days.
-      - Less than 3 full days left: 20% per each day inside the 3-day window (20/40/60%).
-      - Start already reached: no refund (100% fee).
-
-    Total cost is calculated as: daily price * number of nights.
-    Assumes `Ad.price` is a per-day price.
-    """
-    today = timezone.now().date()
-    days_until = (booking.date_from - today).days  # full days till start (can be negative)
-    FREE_CUTOFF = 3
-
-    # fee % (0.0 .. 1.0)
-    if days_until >= FREE_CUTOFF:
-        fee_pct = 0.0
-    elif days_until >= 0:
-        fee_pct = 0.2 * (FREE_CUTOFF - days_until)  # 0.2, 0.4, 0.6
-    else:
-        fee_pct = 1.0  # after start
-
-    # cost basis
-    daily_price = float(getattr(booking.ad, "price", 0) or 0)
-    nights = max(1, (booking.date_to - booking.date_from).days)  # treat date_to as checkout date
-    total_cost = daily_price * nights
-    fee_amount = round(total_cost * fee_pct, 2)
-
-    # user-facing message
-    if days_until >= FREE_CUTOFF:
-        msg = (
-            "Free cancellation is possible only 3 days prior to start date. "
-            "Your cancellation fee would be €0.00 (0%)."
-        )
-    elif days_until >= 0:
-        msg = (
-            "Free cancellation is possible only 3 days prior to start date; "
-            "then 20% of total cost per day. "
-            f"Your cancellation fee would be €{fee_amount} ({round(fee_pct*100,2)}%)."
-        )
-    else:
-        msg = (
-            "Start date has already begun; no refund is provided. "
-            "Are you sure you want to cancel your booking?"
-        )
-
-    return {
-        "days_until_start": days_until,
-        "free_cancellation_cutoff_days": FREE_CUTOFF,
-        "fee_percent": round(fee_pct * 100, 2),  # percent value (0–100)
-        "fee_amount": fee_amount,
-        "currency": "EUR",
-        "nights": nights,
-        "total_cost": round(total_cost, 2),
-        "after_start": days_until < 0,
-        "message": msg,
-    }
 
 
 # -------------------------
@@ -830,27 +753,67 @@ class AdImageViewSet(viewsets.ModelViewSet):
 # -------------------------
 # Booking ViewSet
 # -------------------------
+# Helper: cancellation quote calculator (module-level, no indent)
+def _compute_cancel_quote(booking):
+    """
+    Policy:
+      - Free: if start is in >= 3 full days.
+      - Less than 3 full days left: 20% per each day inside the 3-day window (20/40/60%).
+      - Start already reached: no refund (100% fee).
+
+    Total cost = ad.price (per day) * nights.
+    """
+    today = timezone.now().date()
+    days_until = (booking.date_from - today).days  # can be negative
+    FREE_CUTOFF = 3
+
+    if days_until >= FREE_CUTOFF:
+        fee_pct = 0.0
+    elif days_until >= 0:
+        fee_pct = 0.2 * (FREE_CUTOFF - days_until)  # 0.2, 0.4, 0.6
+    else:
+        fee_pct = 1.0
+
+    daily_price = float(getattr(booking.ad, "price", 0) or 0)
+    nights = max(1, (booking.date_to - booking.date_from).days)  # treat date_to as checkout
+    total_cost = daily_price * nights
+    fee_amount = round(total_cost * fee_pct, 2)
+
+    if days_until >= FREE_CUTOFF:
+        msg = "Free cancellation is possible only 3 days prior to start date. Your cancellation fee would be €0.00 (0%)."
+    elif days_until >= 0:
+        msg = (
+            "Free cancellation is possible only 3 days prior to start date; "
+            "then 20% of total cost per day. "
+            f"Your cancellation fee would be €{fee_amount} ({round(fee_pct*100,2)}%)."
+        )
+    else:
+        msg = "Start date has already begun; no refund is provided. Are you sure you want to cancel your booking?"
+
+    return {
+        "days_until_start": days_until,
+        "free_cancellation_cutoff_days": FREE_CUTOFF,
+        "fee_percent": round(fee_pct * 100, 2),
+        "fee_amount": fee_amount,
+        "currency": "EUR",
+        "nights": nights,
+        "total_cost": round(total_cost, 2),
+        "after_start": days_until < 0,
+        "message": msg,
+    }
+
 @extend_schema(tags=["bookings"])
 @extend_schema_view(
     list=extend_schema(
-        summary="List my related bookings",
-        description="Show bookings where you are either the tenant or the ad owner."
+        summary="List my bookings",
+        description="Shows bookings where you are the tenant or the ad owner.",
     ),
-    retrieve=extend_schema(
-        summary="Retrieve booking",
-        description="Booking details visible only to tenant or ad owner."
-    ),
+    retrieve=extend_schema(summary="Retrieve booking"),
     create=extend_schema(
-        summary="Create a booking request",
-        description=(
-            "Authenticated users only.\n\n"
-            "- Cannot book your own ad\n"
-            "- Cannot book inactive ads\n"
-            "- Dates must not overlap with existing confirmed bookings"
-        ),
+        summary="Create booking",
         examples=[
             OpenApiExample(
-                "Successful booking",
+                "Create booking",
                 value={"ad": 1, "date_from": "2025-09-01", "date_to": "2025-09-10"}
             ),
             OpenApiExample(
@@ -876,6 +839,7 @@ class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
     permission_classes = (permissions.IsAuthenticated, IsBookingOwnerOrAdOwner)
+    http_method_names = ['get', 'post', 'head', 'options']
 
     # Per-action throttling
     throttle_classes = (ScopedRateThrottle,)
@@ -892,9 +856,11 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return Booking.objects.filter(
-            Q(tenant=user) | Q(ad__owner=user)
-        ).select_related('ad', 'tenant')
+        return (
+            Booking.objects
+            .filter(Q(tenant=user) | Q(ad__owner=user))
+            .select_related('ad', 'tenant')
+        )
 
     def get_serializer_context(self):
         """Ensure request is in serializer context."""
@@ -903,22 +869,25 @@ class BookingViewSet(viewsets.ModelViewSet):
         return ctx
 
     def perform_create(self, serializer):
-        """
-        Set tenant; validation lives in serializer.validate().
-        """
+        """Bind tenant to the authenticated user on create."""
         serializer.save(tenant=self.request.user)
 
     @extend_schema(
         summary="Preview cancellation fee (tenant only)",
         description=(
-                "Returns a computed cancellation quote under the current policy:\n"
-                "- Free if there are >= 3 full days until start\n"
-                "- If < 3 days remain: 20% of total per day that falls inside the 3-day window (20/40/60%)\n"
-                "- If the start has already begun: no refund (100% fee)\n\n"
-                "Tenant only. Allowed statuses: PENDING, CONFIRMED. "
-                "Returns estimated cancellation fee. For PENDING it is zero."
+                "Tenant only. Allowed statuses: **PENDING** (always 0%) and **CONFIRMED**.\n\n"
+                "Fee policy for CONFIRMED:\n"
+                "- ≥ 3 full days before start: **0%**\n"
+                "- 3 / 2 / 1 day(s) before start: **20% / 40% / 60%**\n"
+                "- On/after start date: **100%**\n\n"
+                "Returns the computed percent and amounts. Does **not** change booking status."
         ),
-        responses={200: OpenApiResponse(description="Cancellation quote as JSON")}
+        responses={
+            200: OpenApiResponse(description="JSON with fee percent/amount"),
+            400: OpenApiResponse(description="Invalid status (not PENDING/CONFIRMED)"),
+            403: OpenApiResponse(description="Forbidden (not the booking tenant)"),
+            404: OpenApiResponse(description="Not found"),
+        },
     )
     @action(detail=True, methods=['get'], url_path='cancel-quote')
     def cancel_quote(self, request, pk=None):
@@ -929,8 +898,10 @@ class BookingViewSet(viewsets.ModelViewSet):
             raise PermissionDenied("Only the booking tenant can preview/cancel this booking.")
 
         if booking.status not in (Booking.PENDING, Booking.CONFIRMED):
-            return Response({'detail': f'Cannot cancel booking with status {booking.status}.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': f'Cannot cancel booking with status {booking.status}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
         quote = _compute_cancel_quote(booking)
         if booking.status == Booking.PENDING:
@@ -942,20 +913,19 @@ class BookingViewSet(viewsets.ModelViewSet):
         return Response(quote, status=200)
 
     @extend_schema(
-        summary="Cancel booking (tenant only, with fee policy if already confirmed)",
+        summary="Cancel booking (tenant only)",
         description=(
-                "Tenant only. Cancellation is always allowed, but the fee applies as follows:\n"
-                "- Free if there are >= 3 full days until start\n"
-                "- If < 3 days remain: 20% per day inside the 3-day window (20/40/60%)\n"
-                "- If the start has already begun: no refund (100% fee)\n\n"
-                "Response includes the computed `cancel_quote`."
+                "Tenant only. Allowed statuses to cancel: **PENDING** and **CONFIRMED**.\n"
+                "- PENDING → no fee (0%).\n"
+                "- CONFIRMED → fee per policy (0 / 20 / 40 / 60 / 100%).\n\n"
+                "On success sets status to **CANCELLED** and returns the computed `cancel_quote`."
         ),
         responses={
-            200: OpenApiResponse(description="Booking cancelled (returns cancel quote)"),
-            400: OpenApiResponse(description="Invalid status / already cancelled"),
-            403: OpenApiResponse(description="Forbidden (not booking tenant)"),
+            200: OpenApiResponse(description="Cancelled; JSON includes `cancel_quote`"),
+            400: OpenApiResponse(description="Invalid status (neither PENDING nor CONFIRMED) or already cancelled"),
+            403: OpenApiResponse(description="Forbidden (not the booking tenant)"),
             404: OpenApiResponse(description="Not found"),
-        }
+        },
     )
     @action(detail=True, methods=['post'])
     def cancel(self, request, pk=None):
@@ -971,10 +941,12 @@ class BookingViewSet(viewsets.ModelViewSet):
 
         # Allowed statuses
         if booking.status not in (Booking.PENDING, Booking.CONFIRMED):
-            return Response({'detail': f'Cannot cancel booking with status {booking.status}.'},
-                            status=status.HTTP_400_BAD_REQUEST)
+            return Response(
+                {'detail': f'Cannot cancel booking with status {booking.status}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
 
-        # Compute the quote (for UI and possible logging)
+        # Compute the quote (for UI/logging)
         quote = _compute_cancel_quote(booking)
         if booking.status == Booking.PENDING:
             quote.update({
@@ -991,44 +963,60 @@ class BookingViewSet(viewsets.ModelViewSet):
 
     @extend_schema(
         summary="Confirm booking (ad owner only)",
-        description="Also automatically cancels overlapping pending bookings for the same ad and dates.",
+        description=(
+                "Ad owner only. Allowed to confirm **only** from status **PENDING**.\n"
+                "On confirm, all overlapping **PENDING** bookings for the same ad and dates are automatically set to **CANCELLED**."
+        ),
         responses={
             200: OpenApiResponse(description="Booking confirmed"),
-            403: OpenApiResponse(description="Forbidden"),
+            400: OpenApiResponse(description="Invalid current status (not PENDING)"),
+            403: OpenApiResponse(description="Forbidden (not the ad owner)"),
             404: OpenApiResponse(description="Not found"),
-        }
+        },
     )
     @action(detail=True, methods=['post'])
     def confirm(self, request, pk=None):
         booking = self.get_object()
-        # only ad owner can confirm/reject this booking
         if booking.ad.owner_id != request.user.id:
             raise PermissionDenied("Only the ad owner can confirm this booking.")
+        if booking.status != Booking.PENDING:
+            return Response(
+                {'detail': f'Only PENDING bookings can be confirmed (current: {booking.status}).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         booking.status = Booking.CONFIRMED
         booking.save(update_fields=['status'])
-        # auto-cancel overlapping pending bookings
         Booking.objects.filter(
             ad=booking.ad,
             status=Booking.PENDING,
             date_from__lte=booking.date_to,
-            date_to__gte=booking.date_from
+            date_to__gte=booking.date_from,
         ).exclude(pk=booking.pk).update(status=Booking.CANCELLED)
         return Response({'detail': 'Confirmed'}, status=status.HTTP_200_OK)
 
     @extend_schema(
         summary="Reject booking (ad owner only)",
+        description=(
+                "Ad owner only. Allowed to reject **only** from status **PENDING**.\n"
+                "Sets status to **CANCELLED**."
+        ),
         responses={
             200: OpenApiResponse(description="Booking rejected"),
-            403: OpenApiResponse(description="Forbidden"),
+            400: OpenApiResponse(description="Invalid current status (not PENDING)"),
+            403: OpenApiResponse(description="Forbidden (not the ad owner)"),
             404: OpenApiResponse(description="Not found"),
-        }
+        },
     )
     @action(detail=True, methods=['post'])
     def reject(self, request, pk=None):
         booking = self.get_object()
-        # only ad owner can confirm/reject this booking
         if booking.ad.owner_id != request.user.id:
             raise PermissionDenied("Only the ad owner can reject this booking.")
+        if booking.status != Booking.PENDING:
+            return Response(
+                {'detail': f'Only PENDING bookings can be rejected (current: {booking.status}).'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
         booking.status = Booking.CANCELLED
         booking.save(update_fields=['status'])
         return Response({'detail': 'Rejected'}, status=status.HTTP_200_OK)

@@ -1,6 +1,7 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field, OpenApiTypes
 from datetime import date
+from django.utils import timezone
 
 from .models import Ad, Booking, AdImage, Review
 
@@ -72,35 +73,68 @@ class AdImageUploadSerializer(serializers.Serializer):
 
 
 class ReviewSerializer(serializers.ModelSerializer):
-    # Show author in responses
-    tenant = serializers.StringRelatedField(read_only=True)
-    # Accept both `text` and a friendlier alias `comment` on input
-    comment = serializers.CharField(write_only=True, required=False, allow_blank=True)
-
+    comment = serializers.CharField(source="text", required=False, allow_blank=True)
     class Meta:
         model = Review
-        # We keep `text` as the canonical field in responses
-        fields = ("id", "ad", "tenant", "rating", "text", "comment", "created_at", "updated_at")
-        read_only_fields = ("id", "tenant", "created_at", "updated_at")
-
-    def validate_rating(self, value):
-        v = int(value)
-        if not (1 <= v <= 5):
-            raise serializers.ValidationError("Rating must be between 1 and 5.")
-        return v
+        fields = "__all__"
+        read_only_fields = ("tenant", "ad")  # tenant is always request.user
 
     def validate(self, attrs):
         """
-        Normalize payload:
-        - if `comment` is provided and `text` is empty, use it as `text`.
+        For CREATE we allow missing `booking` (perform_create resolves by `ad`).
+        For UPDATE or when `booking` is provided, enforce integrity checks here.
         """
-        text = attrs.get("text")
-        comment = attrs.pop("comment", None)
-        if (not text) and (comment is not None):
-            attrs["text"] = comment
+        request = self.context["request"]
+        user = request.user
+        booking = attrs.get("booking")
+        ad = attrs.get("ad")
+
+        # CREATE without booking is allowed — perform_create will find booking by `ad`
+        if booking is None and self.instance is None:
+            return attrs
+
+        # Ownership
+        if booking and booking.tenant_id != user.id:
+            raise serializers.ValidationError({"booking": "Only the tenant can review this booking."})
+
+        # Status & timing
+        if booking and booking.status != Booking.CONFIRMED:
+            raise serializers.ValidationError({"booking": "Only CONFIRMED bookings can be reviewed."})
+        if booking and timezone.localdate() < booking.date_to:
+            raise serializers.ValidationError({"booking": "You can review only after the stay has ended."})
+
+        # Optional cross-check: if client also sent `ad`, ensure it matches booking.ad
+        if booking and ad and booking.ad_id != ad.id:
+            raise serializers.ValidationError({"ad": "Booking does not belong to this ad."})
+
+        # One review per booking
+        if booking and Review.objects.filter(booking=booking).exists():
+            raise serializers.ValidationError({"booking": "This booking is already reviewed."})
+
         return attrs
 
+    def create(self, validated_data):
+        """
+        Force tenant and ad to be derived from booking to keep integrity.
+        """
+        request = self.context["request"]
+        booking = validated_data["booking"]
+        validated_data["tenant"] = request.user
+        validated_data["ad"] = booking.ad
+        return super().create(validated_data)
 
+    def update(self, instance, validated_data):
+        # Do not allow changing the ad of an existing review — it breaks integrity.
+        new_ad = validated_data.get("ad")
+        if new_ad is not None and new_ad.id != instance.ad_id:
+            raise serializers.ValidationError({"ad": "Cannot change ad for an existing review."})
+        # Optionally forbid changing booking as well
+        if "booking" in validated_data and validated_data["booking"].id != instance.booking_id:
+            raise serializers.ValidationError({"booking": "Cannot change booking for an existing review."})
+        # Optional: lock rating after creation (uncomment if you need it)
+        # if "rating" in validated_data and validated_data["rating"] != instance.rating:
+        #     raise serializers.ValidationError({"rating": "Rating cannot be edited."})
+        return super().update(instance, validated_data)
 
 
 class AdSerializer(serializers.ModelSerializer):
@@ -149,17 +183,21 @@ class AdSerializer(serializers.ModelSerializer):
         return value
 
     def validate_latitude(self, value):
-        # Accept None; otherwise require -90..90
         if value is not None:
-            v = float(value)
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("Latitude must be a number.")
             if not (-90.0 <= v <= 90.0):
                 raise serializers.ValidationError("Latitude must be between -90 and 90.")
         return value
 
     def validate_longitude(self, value):
-        # Accept None; otherwise require -180..180
         if value is not None:
-            v = float(value)
+            try:
+                v = float(value)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError("Longitude must be a number.")
             if not (-180.0 <= v <= 180.0):
                 raise serializers.ValidationError("Longitude must be between -180 and 180.")
         return value
@@ -202,67 +240,65 @@ class BookingSerializer(serializers.ModelSerializer):
     # -------------------------
     # Validation (server-side)
     # -------------------------
-    def validate(self, data):
+    def validate(self, attrs):
         """
-        Global validation for booking create/update:
-        - required fields
-        - `date_from` >= tomorrow; `date_to` > `date_from`
-        - ad must be active
-        - tenant cannot book own ad
-        - no overlaps with existing CONFIRMED
+        Test expectations:
+        - inactive ad -> key 'ad'
+        - own ad      -> key 'non_field_errors'
+        - wrong order -> key 'date_to' with phrase 'greater than date_from'
+        - date_from must be tomorrow+ -> key 'date_from'
+        - confirmed overlap -> key 'non_field_errors'
         """
-        request = self.context.get("request")
-        user = getattr(request, "user", None)
+        request = self.context["request"]
+        user = request.user
 
-        ad = data.get("ad") or getattr(self.instance, "ad", None)
-        date_from = data.get("date_from") or getattr(self.instance, "date_from", None)
-        date_to = data.get("date_to") or getattr(self.instance, "date_to", None)
+        ad = attrs.get("ad") or getattr(self.instance, "ad", None)
+        date_from = attrs.get("date_from") or getattr(self.instance, "date_from", None)
+        date_to = attrs.get("date_to") or getattr(self.instance, "date_to", None)
 
         errors = {}
 
-        # Required fields
-        if not ad:
-            errors["ad"] = "This field is required."
-        if not date_from:
-            errors["date_from"] = "This field is required."
-        if not date_to:
-            errors["date_to"] = "This field is required."
-        if errors:
-            raise serializers.ValidationError(errors)
-
-        # Chronology rules
-        today = date.today()
-        if date_from <= today:
-            errors["date_from"] = "Must be at least tomorrow."
-        if date_to <= date_from:
-            errors["date_to"] = "Must be greater than date_from."
-
-        # Ad must be active
+        # 1) Ad activity FIRST so tests see 'ad' even если даты кривые
         if ad and not getattr(ad, "is_active", True):
-            errors.setdefault("ad", "This ad is inactive and cannot be booked.")
+            errors["ad"] = ["This ad is inactive."]
 
-        # Forbid booking own ad
-        if user and getattr(ad, "owner_id", None) == getattr(user, "id", None):
+        # 2) Own ad -> non_field_errors
+        if ad and ad.owner_id == user.id:
             errors.setdefault("non_field_errors", []).append("You cannot book your own ad.")
 
-        # Prevent overlaps with existing CONFIRMED
-        if ad and date_from and date_to:
-            qs = Booking.objects.filter(
-                ad=ad,
-                status=Booking.CONFIRMED,
-                date_from__lt=date_to,
-                date_to__gt=date_from,
-            )
-            if self.instance:
-                qs = qs.exclude(pk=self.instance.pk)
-            if qs.exists():
-                errors.setdefault("non_field_errors", []).append(
-                    "Selected dates overlap with a confirmed booking."
+        # 3) Dates — всегда формируем обе ошибки, если нужно
+        if date_from is not None and date_to is not None:
+            # порядок дат — тест ждёт 'greater than date_from' в ключе date_to
+            if date_to <= date_from:
+                errors.setdefault("date_to", []).append("must be greater than date_from")
+            # date_from не ранее завтра
+            today = timezone.localdate()
+            if date_from <= today:
+                errors.setdefault("date_from", []).append("Start date must be at least tomorrow.")
+            # 4) Оверлап с CONFIRMED — только если выше базовые проверки не насыпали ошибок
+            if not errors:
+                overlap = Booking.objects.filter(
+                    ad=ad, status=Booking.CONFIRMED,
+                    date_from__lte=date_to, date_to__gte=date_from
                 )
+                if self.instance:
+                    overlap = overlap.exclude(pk=self.instance.pk)
+                if overlap.exists():
+                    errors.setdefault("non_field_errors", []).append(
+                        "Requested dates overlap with a confirmed booking."
+                    )
 
         if errors:
             raise serializers.ValidationError(errors)
-        return data
+        return attrs
+
+    def update(self, instance, validated_data):
+        # Forbid changing immutable relations
+        if "ad" in validated_data and validated_data["ad"].id != instance.ad_id:
+            raise serializers.ValidationError({"ad": "Cannot change ad for an existing booking."})
+        if "tenant" in validated_data and validated_data["tenant"].id != instance.tenant_id:
+            raise serializers.ValidationError({"tenant": "Cannot change tenant for an existing booking."})
+        return super().update(instance, validated_data)
 
     # -------------------------
     # Presentation helpers
