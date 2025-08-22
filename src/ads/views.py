@@ -296,25 +296,27 @@ class AdFilter(df.FilterSet):
         ],
     ),
     retrieve=extend_schema(
-        summary="Retrieve ad",
-        description="Public details of a specific ad.",
-        auth=[],
-    ),
-    create=extend_schema(
         summary="Create ad",
-        description="Create a new ad (only for authenticated users).",
+        description=(
+                "Create a new ad (only for authenticated users).\n"
+                "Latitude/Longitude are set by the MAP PIN in the UI; "
+                "in Swagger you can type them manually for testing."
+        ),
         examples=[
             OpenApiExample(
-                "Ad creation example",
+                "Ad creation with map coordinates",
                 value={
-                    "title": "Modern apartment in Berlin",
-                    "description": "Spacious 2-room apartment near Alexanderplatz",
-                    "location": "Berlin",
-                    "price": 1200,
-                    "rooms": 2,
+                    "title": "Cozy studio in Kreuzberg",
+                    "description": "Bright, quiet, close to U-Bahn.",
+                    "location": "Berlin, Kreuzberg",
+                    "price": 85,
+                    "rooms": 1,
+                    "area": 28,
                     "housing_type": "apartment",
-                    "is_active": True
-                }
+                    "latitude": 52.500312,
+                    "longitude": 13.423901
+                },
+                request_only=True,
             )
         ],
         responses={
