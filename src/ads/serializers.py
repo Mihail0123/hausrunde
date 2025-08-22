@@ -144,6 +144,7 @@ class AdSerializer(serializers.ModelSerializer):
     average_rating = serializers.FloatField(read_only=True)
     reviews_count = serializers.IntegerField(read_only=True)
     views_count = serializers.IntegerField(read_only=True)
+    housing_type = serializers.ChoiceField(choices=Ad.HousingType.choices)
 
     class Meta:
         model = Ad
@@ -204,27 +205,19 @@ class AdSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs):
         """
-        Require a map pin on create: both latitude & longitude must be provided.
-        On update, allow changing both together (never only one).
+        On create: require both coordinates (map pin).
+        On update: allow partial coordinate updates.
         """
-        # read values either from incoming payload or existing instance
         lat = attrs.get("latitude", getattr(self.instance, "latitude", None))
         lon = attrs.get("longitude", getattr(self.instance, "longitude", None))
 
         if self.instance is None:
-            # Creating: both must be present (set by the map pin)
             if lat is None or lon is None:
                 raise serializers.ValidationError(
                     {"detail": "Set the map pin to provide latitude and longitude."}
                 )
-        else:
-            # Updating: do not allow only one of them
-            if (("latitude" in attrs) ^ ("longitude" in attrs)):
-                raise serializers.ValidationError(
-                    {"detail": "Latitude and longitude must be provided together."}
-                )
-
         return attrs
+
 
 class BookingSerializer(serializers.ModelSerializer):
     # Writable input: `ad`, `date_from`, `date_to`
