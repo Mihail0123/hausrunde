@@ -145,6 +145,7 @@ class AdSerializer(serializers.ModelSerializer):
     reviews_count = serializers.IntegerField(read_only=True)
     views_count = serializers.IntegerField(read_only=True)
     housing_type = serializers.ChoiceField(choices=Ad.HousingType.choices)
+    recent_reviews = serializers.SerializerMethodField(read_only=True)
 
     class Meta:
         model = Ad
@@ -157,11 +158,13 @@ class AdSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
             "images",
             "average_rating", "reviews_count", "views_count",
+            'recent_reviews',
         ]
         read_only_fields = [
             "id", "owner", "owner_id",
             "created_at", "updated_at",
             "images", "average_rating", "reviews_count", "views_count",
+            'recent_reviews',
         ]
 
     # --- Server-side validation (non-negative numbers and lat/lon ranges) ---
@@ -217,6 +220,25 @@ class AdSerializer(serializers.ModelSerializer):
                     {"detail": "Set the map pin to provide latitude and longitude."}
                 )
         return attrs
+
+    def get_recent_reviews(self, obj):
+        """
+        Return last 3 reviews for this ad with rating/comment and tenant email.
+        """
+        qs = (Review.objects
+              .filter(ad=obj)
+              .select_related("tenant")
+              .order_by("-created_at")[:3])
+        out = []
+        for r in qs:
+            out.append({
+                "id": r.id,
+                "rating": r.rating,
+                "comment": r.text,  # stored as `text` in DB
+                "tenant": {"id": r.tenant_id, "email": getattr(r.tenant, "email", None)},
+                "created_at": r.created_at,
+            })
+        return out
 
 
 class BookingSerializer(serializers.ModelSerializer):

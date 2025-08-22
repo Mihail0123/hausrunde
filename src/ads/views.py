@@ -295,7 +295,7 @@ class AdFilter(df.FilterSet):
 
         ],
     ),
-    retrieve=extend_schema(
+    create=extend_schema(
         summary="Create ad",
         description=(
                 "Create a new ad (only for authenticated users).\n"
@@ -324,6 +324,12 @@ class AdFilter(df.FilterSet):
             400: OpenApiResponse(description="Validation error"),
             401: OpenApiResponse(description="Unauthorized"),
         }
+    ),
+    retrieve=extend_schema(
+        summary="Retrieve ad",
+        description="Get a single ad with aggregates (rating, reviews_count, views_count).",
+        auth=[],
+        responses={200: OpenApiResponse(response=AdSerializer, description="Ad")}
     ),
     update=extend_schema(summary="Update ad", description="Update an ad (only for the owner)."),
     partial_update=extend_schema(summary="Partial update ad", description="Partially update an ad (only for the owner)."),
@@ -759,38 +765,35 @@ class AdImageViewSet(viewsets.ModelViewSet):
 def _compute_cancel_quote(booking):
     """
     Policy:
-      - Free: if start is in >= 3 full days.
-      - Less than 3 full days left: 20% per each day inside the 3-day window (20/40/60%).
-      - Start already reached: no refund (100% fee).
+      - Free: if start is in >= 4 full days.
+      - 3 / 2 / 1 days before start: 20% / 40% / 60%.
+      - On/after start date: 100%.
 
     Total cost = ad.price (per day) * nights.
     """
     today = timezone.now().date()
     days_until = (booking.date_from - today).days  # can be negative
-    FREE_CUTOFF = 3
+    FREE_CUTOFF = 4  # free if >= 4 full days before start
 
     if days_until >= FREE_CUTOFF:
         fee_pct = 0.0
-    elif days_until >= 0:
-        fee_pct = 0.2 * (FREE_CUTOFF - days_until)  # 0.2, 0.4, 0.6
-    else:
-        fee_pct = 1.0
-
-    daily_price = float(getattr(booking.ad, "price", 0) or 0)
-    nights = max(1, (booking.date_to - booking.date_from).days)  # treat date_to as checkout
-    total_cost = daily_price * nights
-    fee_amount = round(total_cost * fee_pct, 2)
-
-    if days_until >= FREE_CUTOFF:
-        msg = "Free cancellation is possible only 3 days prior to start date. Your cancellation fee would be €0.00 (0%)."
-    elif days_until >= 0:
+        msg = "Free cancellation is available up to 4 full days before the start date."
+    elif days_until >= 1:
+        # 3 -> 20%, 2 -> 40%, 1 -> 60%
+        fee_pct = 0.2 * (FREE_CUTOFF - days_until)
         msg = (
-            "Free cancellation is possible only 3 days prior to start date; "
-            "then 20% of total cost per day. "
-            f"Your cancellation fee would be €{fee_amount} ({round(fee_pct*100,2)}%)."
+            "Free cancellation is only up to 4 full days before start; "
+            "inside the 3-day window the fee is 20%/40%/60% per day."
         )
     else:
-        msg = "Start date has already begun; no refund is provided. Are you sure you want to cancel your booking?"
+        # day-of (0) or after (<0): 100%
+        fee_pct = 1.0
+        msg = "Start date has been reached or passed; cancellation fee is 100%."
+
+    daily_price = float(getattr(booking.ad, "price", 0) or 0)
+    nights = max(1, (booking.date_to - booking.date_from).days)
+    total_cost = daily_price * nights
+    fee_amount = round(total_cost * fee_pct, 2)
 
     return {
         "days_until_start": days_until,
@@ -800,15 +803,31 @@ def _compute_cancel_quote(booking):
         "currency": "EUR",
         "nights": nights,
         "total_cost": round(total_cost, 2),
-        "after_start": days_until < 0,
-        "message": msg,
+        "after_start": days_until <= 0,
+        "message": msg + f" Your cancellation fee would be €{fee_amount} ({round(fee_pct*100,2)}%).",
     }
 
 @extend_schema(tags=["bookings"])
 @extend_schema_view(
     list=extend_schema(
-        summary="List my bookings",
-        description="Shows bookings where you are the tenant or the ad owner.",
+        summary="List my bookings (as tenant or ad owner)",
+        description=(
+                "Returns bookings where you are either the tenant or the ad owner.\n\n"
+                "**Filters:**\n"
+                "- `role=owner|tenant` — limit to your owner/tenant side\n"
+                "- `incoming=true` — only PENDING bookings where you are the owner (inbox)\n"
+                "- `status=` — DjangoFilter (e.g. PENDING, CONFIRMED, ...)\n"
+                "- `ad=` — filter by ad id\n"
+                "- `ordering=` — created_at, date_from, date_to, status (default -created_at)"
+        ),
+        parameters=[
+            OpenApiParameter("role", OpenApiTypes.STR, description="owner | tenant"),
+            OpenApiParameter("incoming", OpenApiTypes.BOOL, description="Only owner's PENDING bookings (inbox)"),
+            OpenApiParameter("status", OpenApiTypes.STR, description="Status filter (DjangoFilter)"),
+            OpenApiParameter("ad", OpenApiTypes.INT, description="Filter by ad id"),
+            OpenApiParameter("ordering", OpenApiTypes.STR,
+                             description="created_at | date_from | date_to | status, prefix with - for desc"),
+        ],
     ),
     retrieve=extend_schema(summary="Retrieve booking"),
     create=extend_schema(
@@ -841,10 +860,17 @@ class BookingViewSet(viewsets.ModelViewSet):
     queryset = Booking.objects.all()
     serializer_class = BookingSerializer
     permission_classes = (permissions.IsAuthenticated, IsBookingOwnerOrAdOwner)
+    filter_backends = (df.DjangoFilterBackend, filters.OrderingFilter)
+    filterset_fields = ("status", "ad")  # ?status=PENDING&ad=123
+    ordering_fields = ("created_at", "date_from", "date_to", "status")
+    ordering = ("-created_at",)
     http_method_names = ['get', 'post', 'head', 'options']
 
     # Per-action throttling
     throttle_classes = (ScopedRateThrottle,)
+
+    def list(self, request, *args, **kwargs):
+        return super().list(request, *args, **kwargs)
 
     def get_throttles(self):
         scope_map = {
@@ -857,12 +883,30 @@ class BookingViewSet(viewsets.ModelViewSet):
         return super().get_throttles()
 
     def get_queryset(self):
+        """
+        Show bookings where the current user is either a tenant or the ad owner.
+        Optional filters:
+        - role=tenant|owner — limit to one side
+        - incoming=true     — owner's inbox: only PENDING bookings for the owner's ads
+        """
         user = self.request.user
-        return (
+        qs = (
             Booking.objects
             .filter(Q(tenant=user) | Q(ad__owner=user))
-            .select_related('ad', 'tenant')
+            .select_related("ad", "ad__owner", "tenant")
         )
+
+        role = (self.request.query_params.get("role") or "").lower()
+        if role == "owner":
+            qs = qs.filter(ad__owner=user)
+        elif role == "tenant":
+            qs = qs.filter(tenant=user)
+
+        incoming = (self.request.query_params.get("incoming") or "").lower()
+        if incoming in ("1", "true", "yes"):
+            qs = qs.filter(ad__owner=user, status=Booking.PENDING)
+
+        return qs
 
     def get_serializer_context(self):
         """Ensure request is in serializer context."""
@@ -879,7 +923,7 @@ class BookingViewSet(viewsets.ModelViewSet):
         description=(
                 "Tenant only. Allowed statuses: **PENDING** (always 0%) and **CONFIRMED**.\n\n"
                 "Fee policy for CONFIRMED:\n"
-                "- ≥ 3 full days before start: **0%**\n"
+                "- ≥ 4 full days before start: **0%**\n"
                 "- 3 / 2 / 1 day(s) before start: **20% / 40% / 60%**\n"
                 "- On/after start date: **100%**\n\n"
                 "Returns the computed percent and amounts. Does **not** change booking status."

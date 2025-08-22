@@ -29,13 +29,48 @@ def cancel_bookings(modeladmin, request, qs):
 
 @admin.register(Booking)
 class BookingAdmin(admin.ModelAdmin):
-    list_display = ('id','ad','tenant','date_from','date_to','status','created_at')
-    list_filter = ('status','date_from','date_to')
-    search_fields = ('id','ad__title','ad__id','tenant__email','tenant__first_name','tenant__last_name')
-    autocomplete_fields = ('ad','tenant')
-    date_hierarchy = 'created_at'
-    actions = (confirm_bookings, cancel_bookings)
-    list_select_related = ('ad','tenant')
+    """
+    Show booking inbox clearly:
+    - ad owner email as a separate column
+    - tenant email
+    - quick filters and fast queries
+    """
+    list_display = (
+        "id",
+        "ad",                 # title
+        "ad_owner_email",     # owner of the ad
+        "tenant_email",       # tenant
+        "date_from",
+        "date_to",
+        "status",
+        "created_at",
+    )
+    # Make both id and ad clickable (navigate to Booking / Ad quickly)
+    list_display_links = ("id", "ad")
+
+    # Speed up list view; avoid N+1
+    list_select_related = ("ad", "ad__owner", "tenant")
+
+    # Useful filters/search for inbox
+    list_filter = ("status",)
+    search_fields = (
+        "ad__title",
+        "ad__owner__email",
+        "tenant__email",
+    )
+    ordering = ("-created_at",)
+
+    @admin.display(ordering="ad__owner__email", description="Owner")
+    def ad_owner_email(self, obj: Booking):
+        """Ad owner email for quick triage."""
+        owner = getattr(obj.ad, "owner", None)
+        return getattr(owner, "email", None)
+
+    @admin.display(ordering="tenant__email", description="Tenant")
+    def tenant_email(self, obj: Booking):
+        """Tenant email (requestor)."""
+        tenant = getattr(obj, "tenant", None)
+        return getattr(tenant, "email", None)
 
 @admin.register(Review)
 class ReviewAdmin(admin.ModelAdmin):
