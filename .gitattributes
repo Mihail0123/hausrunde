@@ -1,0 +1,14 @@
+* text=auto
+
+*.sh   text eol=lf
+Dockerfile text eol=lf
+infra/docker/entrypoint.sh text eol=lf
+infra/docker-compose.review.yml text eol=lf
+
+*.png  -text
+*.jpg  -text
+*.jpeg -text
+*.gif  -text
+*.ico  -text
+*.pdf  -text
+*.sqlite3 -text
