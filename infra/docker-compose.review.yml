@@ -1,0 +1,59 @@
+# No .env required.
+# Uses MySQL with demo credentials and passes the same to Django.
+# Demo data seeding is triggered from entrypoint via DEMO_* envs.
+
+services:
+  db:
+    image: mysql:8.0
+    command: >
+      --default-authentication-plugin=mysql_native_password
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: ${DB_NAME:-hausrunde}
+      MYSQL_USER: ${DB_USER:-appuser}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-app-pass-123}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpass-change-me}
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -p${MYSQL_ROOT_PASSWORD:-rootpass-change-me} || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ..
+      dockerfile: infra/docker/Dockerfile
+    ports:
+      - "8001:8000"
+    environment:
+      # Django config (demo defaults; NOT for production)
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:-insecure-dev-key-change-me}
+      DEBUG: ${DEBUG:-1}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-127.0.0.1,localhost}
+
+      # DB connection (matches the db service above)
+      DB_NAME: ${DB_NAME:-hausrunde}
+      DB_USER: ${DB_USER:-appuser}
+      DB_PASSWORD: ${DB_PASSWORD:-app-pass-123}
+      DB_HOST: db
+      DB_PORT: 3306
+
+      # Demo seeding toggles (consumed by entrypoint.sh)
+      DEMO_SEED: ${DEMO_SEED:-1}                 # 1 = seed demo data on start
+      DEMO_SEED_ADS: ${DEMO_SEED_ADS:-40}        # how many ads to create
+      DEMO_SEED_WITH_REVIEWS: ${DEMO_SEED_WITH_REVIEWS:-1}  # 1 = add reviews
+
+    volumes:
+      - media_data:/app/media
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db_data:
+  media_data:
