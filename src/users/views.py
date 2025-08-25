@@ -39,15 +39,19 @@ class PublicUserSerializer(rf_serializers.Serializer):
     last_name = rf_serializers.CharField(allow_blank=True, allow_null=True, required=False)
     phone_number = rf_serializers.CharField(allow_blank=True, allow_null=True, required=False)
 
+
 class RegisterResponseSerializer(rf_serializers.Serializer):
     detail = rf_serializers.CharField()
     user = PublicUserSerializer()
 
+
 class LoginResponseSerializer(rf_serializers.Serializer):
     detail = rf_serializers.CharField()
 
+
 class SimpleDetailSerializer(rf_serializers.Serializer):
     detail = rf_serializers.CharField()
+
 
 class DebugTokenPayloadSerializer(rf_serializers.Serializer):
     has_access = rf_serializers.BooleanField()
@@ -57,6 +61,7 @@ class DebugTokenPayloadSerializer(rf_serializers.Serializer):
     refresh_expires_in_sec = rf_serializers.IntegerField(allow_null=True)
     refresh_valid = rf_serializers.BooleanField()
 
+
 @extend_schema(
     summary="Register & set auth cookies",
     request=RegistrationSerializer,
@@ -65,7 +70,8 @@ class DebugTokenPayloadSerializer(rf_serializers.Serializer):
             response=RegisterResponseSerializer,
             description="Account created; JWT tokens are set as httpOnly cookies."
         ),
-        400: OpenApiResponse(description="Validation error")},
+        400: OpenApiResponse(description="Validation error")
+    },
     tags=["auth"],
 )
 class RegisterView(CreateAPIView):
@@ -223,6 +229,7 @@ class LogoutView(APIView):
         response.delete_cookie('refresh_token', path=path, domain=domain)
         return response
 
+
 @extend_schema(
     summary="Debug token payload",
     request=None,
@@ -270,6 +277,12 @@ class DebugTokenView(APIView):
         return Response(data)
 
 
+@extend_schema(
+    summary="Get current user's profile",
+    request=None,
+    responses={200: CustomUserSerializer},
+    tags=["auth"],
+)
 class MeView(APIView):
     permission_classes = [IsAuthenticated]
 

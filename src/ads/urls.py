@@ -17,6 +17,5 @@ router.register(r"ad-images", AdImageViewSet, basename="adimage")
 urlpatterns = [
     path("", include(router.urls)),
     path("search/top/", SearchHistoryTopView.as_view(), name="search-top"),
-    path("search-top/", SearchHistoryTopView.as_view(), name="search-top-legacy") # test alias
 ]
 

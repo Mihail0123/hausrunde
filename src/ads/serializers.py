@@ -1,15 +1,30 @@
 from rest_framework import serializers
 from drf_spectacular.utils import extend_schema_field, OpenApiTypes
-from datetime import date
 from django.utils import timezone
 
 from .models import Ad, Booking, AdImage, Review
 
 
+# --- Small schema-only helpers for nested objects (keep them lightweight) ---
+class PublicUserTinySerializer(serializers.Serializer):
+    """Public projection for nested user references."""
+    id = serializers.IntegerField()
+    email = serializers.EmailField(allow_null=True, required=False)
+
+
+class ReviewShortSerializer(serializers.Serializer):
+    """Public projection for recent reviews shown on Ad cards/details."""
+    id = serializers.IntegerField()
+    rating = serializers.IntegerField()
+    comment = serializers.CharField(allow_blank=True, allow_null=True, required=False)
+    tenant = PublicUserTinySerializer()
+    created_at = serializers.DateTimeField()
+
+
 class AdImageSerializer(serializers.ModelSerializer):
-    # Absolute URL (с http://127.0.0.1:8000/...), if request in context
+    # Absolute URL (with scheme/host) if request is in context
     image_url = serializers.SerializerMethodField()
-    # Relative /media/...
+    # Relative /media/... path
     image_path = serializers.SerializerMethodField()
 
     class Meta:
@@ -36,7 +51,6 @@ class AdImageSerializer(serializers.ModelSerializer):
 
 class AdImageCaptionUpdateSerializer(serializers.ModelSerializer):
     """Allow updating caption only (used by PATCH on single image)."""
-
     class Meta:
         model = AdImage
         fields = ("caption",)
@@ -74,10 +88,11 @@ class AdImageUploadSerializer(serializers.Serializer):
 
 class ReviewSerializer(serializers.ModelSerializer):
     comment = serializers.CharField(source="text", required=False, allow_blank=True)
+
     class Meta:
         model = Review
         fields = "__all__"
-        read_only_fields = ("tenant", "ad")  # tenant is always request.user
+        read_only_fields = ("tenant", "ad")
 
     def validate(self, attrs):
         """
@@ -89,34 +104,26 @@ class ReviewSerializer(serializers.ModelSerializer):
         booking = attrs.get("booking")
         ad = attrs.get("ad")
 
-        # CREATE without booking is allowed — perform_create will find booking by `ad`
         if booking is None and self.instance is None:
             return attrs
 
-        # Ownership
         if booking and booking.tenant_id != user.id:
             raise serializers.ValidationError({"booking": "Only the tenant can review this booking."})
 
-        # Status & timing
         if booking and booking.status != Booking.CONFIRMED:
             raise serializers.ValidationError({"booking": "Only CONFIRMED bookings can be reviewed."})
         if booking and timezone.localdate() < booking.date_to:
             raise serializers.ValidationError({"booking": "You can review only after the stay has ended."})
 
-        # Optional cross-check: if client also sent `ad`, ensure it matches booking.ad
         if booking and ad and booking.ad_id != ad.id:
             raise serializers.ValidationError({"ad": "Booking does not belong to this ad."})
 
-        # One review per booking
         if booking and Review.objects.filter(booking=booking).exists():
             raise serializers.ValidationError({"booking": "This booking is already reviewed."})
 
         return attrs
 
     def create(self, validated_data):
-        """
-        Force tenant and ad to be derived from booking to keep integrity.
-        """
         request = self.context["request"]
         booking = validated_data["booking"]
         validated_data["tenant"] = request.user
@@ -124,16 +131,11 @@ class ReviewSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        # Do not allow changing the ad of an existing review — it breaks integrity.
         new_ad = validated_data.get("ad")
         if new_ad is not None and new_ad.id != instance.ad_id:
             raise serializers.ValidationError({"ad": "Cannot change ad for an existing review."})
-        # Optionally forbid changing booking as well
         if "booking" in validated_data and validated_data["booking"].id != instance.booking_id:
             raise serializers.ValidationError({"booking": "Cannot change booking for an existing review."})
-        # Optional: lock rating after creation (uncomment if you need it)
-        # if "rating" in validated_data and validated_data["rating"] != instance.rating:
-        #     raise serializers.ValidationError({"rating": "Rating cannot be edited."})
         return super().update(instance, validated_data)
 
 
@@ -158,30 +160,26 @@ class AdSerializer(serializers.ModelSerializer):
             "created_at", "updated_at",
             "images",
             "average_rating", "reviews_count", "views_count",
-            'recent_reviews',
+            "recent_reviews",
         ]
         read_only_fields = [
             "id", "owner", "owner_id",
             "created_at", "updated_at",
             "images", "average_rating", "reviews_count", "views_count",
-            'recent_reviews',
+            "recent_reviews",
         ]
 
-    # --- Server-side validation (non-negative numbers and lat/lon ranges) ---
     def validate_price(self, value):
-        # Accept None; otherwise require non-negative
         if value is not None and value < 0:
             raise serializers.ValidationError("Price must be >= 0.")
         return value
 
     def validate_rooms(self, value):
-        # Accept None; otherwise require non-negative integer
         if value is not None and value < 0:
             raise serializers.ValidationError("Rooms must be >= 0.")
         return value
 
     def validate_area(self, value):
-        # Accept None; otherwise require non-negative
         if value is not None and value < 0:
             raise serializers.ValidationError("Area must be >= 0.")
         return value
@@ -213,17 +211,16 @@ class AdSerializer(serializers.ModelSerializer):
         """
         lat = attrs.get("latitude", getattr(self.instance, "latitude", None))
         lon = attrs.get("longitude", getattr(self.instance, "longitude", None))
-
-        if self.instance is None:
-            if lat is None or lon is None:
-                raise serializers.ValidationError(
-                    {"detail": "Set the map pin to provide latitude and longitude."}
-                )
+        if self.instance is None and (lat is None or lon is None):
+            raise serializers.ValidationError(
+                {"detail": "Set the map pin to provide latitude and longitude."}
+            )
         return attrs
 
+    @extend_schema_field(ReviewShortSerializer(many=True))
     def get_recent_reviews(self, obj):
         """
-        Return last 3 reviews for this ad with rating/comment and tenant email.
+        Return last 3 reviews with rating/comment and tenant email.
         """
         qs = (Review.objects
               .filter(ad=obj)
@@ -234,7 +231,7 @@ class AdSerializer(serializers.ModelSerializer):
             out.append({
                 "id": r.id,
                 "rating": r.rating,
-                "comment": r.text,  # stored as `text` in DB
+                "comment": r.text,
                 "tenant": {"id": r.tenant_id, "email": getattr(r.tenant, "email", None)},
                 "created_at": r.created_at,
             })
@@ -296,24 +293,18 @@ class BookingSerializer(serializers.ModelSerializer):
 
         errors = {}
 
-        # 1) Ad activity FIRST so tests see 'ad' even если даты кривые
         if ad and not getattr(ad, "is_active", True):
             errors["ad"] = ["This ad is inactive."]
 
-        # 2) Own ad -> non_field_errors
         if ad and ad.owner_id == user.id:
             errors.setdefault("non_field_errors", []).append("You cannot book your own ad.")
 
-        # 3) Dates — всегда формируем обе ошибки, если нужно
         if date_from is not None and date_to is not None:
-            # порядок дат — тест ждёт 'greater than date_from' в ключе date_to
             if date_to <= date_from:
                 errors.setdefault("date_to", []).append("must be greater than date_from")
-            # date_from не ранее завтра
             today = timezone.localdate()
             if date_from <= today:
                 errors.setdefault("date_from", []).append("Start date must be at least tomorrow.")
-            # 4) Оверлап с CONFIRMED — только если выше базовые проверки не насыпали ошибок
             if not errors:
                 overlap = Booking.objects.filter(
                     ad=ad, status=Booking.CONFIRMED,
@@ -331,7 +322,6 @@ class BookingSerializer(serializers.ModelSerializer):
         return attrs
 
     def update(self, instance, validated_data):
-        # Forbid changing immutable relations
         if "ad" in validated_data and validated_data["ad"].id != instance.ad_id:
             raise serializers.ValidationError({"ad": "Cannot change ad for an existing booking."})
         if "tenant" in validated_data and validated_data["tenant"].id != instance.tenant_id:
@@ -341,12 +331,14 @@ class BookingSerializer(serializers.ModelSerializer):
     # -------------------------
     # Presentation helpers
     # -------------------------
+    @extend_schema_field(PublicUserTinySerializer)
     def get_tenant(self, obj):
         t = getattr(obj, "tenant", None)
         if not t:
             return None
         return {"id": t.id, "email": t.email}
 
+    @extend_schema_field(PublicUserTinySerializer)
     def get_owner(self, obj):
         ad = getattr(obj, "ad", None)
         if not ad or not getattr(ad, "owner", None):
@@ -362,19 +354,22 @@ class BookingSerializer(serializers.ModelSerializer):
         return bool(user and ad_owner_id == getattr(user, "id", None))
 
     # Action flags
+    @extend_schema_field(OpenApiTypes.BOOL)
     def get_can_cancel(self, obj):
         user = getattr(self.context.get("request"), "user", None)
         return self._is_tenant(obj, user) and obj.status in (Booking.PENDING, Booking.CONFIRMED)
 
+    @extend_schema_field(OpenApiTypes.BOOL)
     def get_can_cancel_quote(self, obj):
-        # Tenant can preview cancel-quote for PENDING or CONFIRMED (matches /cancel-quote/ view).
         user = getattr(self.context.get("request"), "user", None)
         return self._is_tenant(obj, user) and obj.status in (Booking.PENDING, Booking.CONFIRMED)
 
+    @extend_schema_field(OpenApiTypes.BOOL)
     def get_can_confirm(self, obj):
         user = getattr(self.context.get("request"), "user", None)
         return self._is_owner(obj, user) and obj.status == Booking.PENDING
 
+    @extend_schema_field(OpenApiTypes.BOOL)
     def get_can_reject(self, obj):
         user = getattr(self.context.get("request"), "user", None)
         return self._is_owner(obj, user) and obj.status == Booking.PENDING
