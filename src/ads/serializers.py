@@ -240,6 +240,17 @@ class AdSerializer(serializers.ModelSerializer):
 
 class BookingSerializer(serializers.ModelSerializer):
     # Writable input: `ad`, `date_from`, `date_to`
+    # Date fields with friendly error messages
+    date_from = serializers.DateField(
+        error_messages={
+            "invalid": "Invalid date or format. Expected YYYY-MM-DD and a real calendar date."
+        }
+    )
+    date_to = serializers.DateField(
+        error_messages={
+            "invalid": "Invalid date or format. Expected YYYY-MM-DD and a real calendar date."
+        }
+    )
     # Read-only denormalized fields for UI convenience:
     ad_id = serializers.IntegerField(read_only=True)
     ad_title = serializers.CharField(source="ad.title", read_only=True)
