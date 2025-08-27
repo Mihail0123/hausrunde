@@ -166,6 +166,11 @@ AD_IMAGE_MAX_HEIGHT = 6000         # max height in pixels
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# --- Ad views / privacy ---
+ADS_VIEW_DEDUP_HOURS = int(os.getenv("ADS_VIEW_DEDUP_HOURS", 6))  # dedup window
+ADS_ANON_IP_SALT = os.getenv("ADS_ANON_IP_SALT", SECRET_KEY)      # salt for ip hash of anon
+
+
 # --- Auth cookie flags (used by login/register/middleware) ---
 # For local dev over HTTP keep SECURE=False; in production set to True (HTTPS only).
 AUTH_COOKIE_SECURE = not DEBUG

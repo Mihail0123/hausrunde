@@ -21,6 +21,7 @@ from django.utils.dateparse import parse_date
 from django.conf import settings
 from django.core.exceptions import ValidationError as DjangoValidationError
 from datetime import timedelta
+from hashlib import blake2b
 
 from .models import Ad, Booking, AdImage, Review, SearchQuery, AdView
 from .serializers import (
@@ -35,10 +36,7 @@ from .validators import validate_image_file
 from .throttling import ScopedRateThrottleIsolated
 
 
-VIEW_DEDUP_HOURS = 6
-
 logger = logging.getLogger(__name__)
-
 
 # -------------------------
 # Filters for Ads (readable labels + smart search 'q')
@@ -413,32 +411,59 @@ class AdViewSet(viewsets.ModelViewSet):
         return response
 
     # --- view logging (retrieve) ---
+    @staticmethod
+    def _first_ip_from_xff(xff_header: str) -> str:
+        if not xff_header:
+            return ''
+        return xff_header.split(',')[0].strip()
+
+    @staticmethod
+    def _hash_ip(ip: str) -> str:
+        if not ip:
+            return ''
+        h = blake2b(digest_size=20)  # 160-bit is compact and sufficient
+        h.update(f"{ip}|{getattr(settings, 'ADS_ANON_IP_SALT', settings.SECRET_KEY)}".encode('utf-8'))
+        return h.hexdigest()
+
     def retrieve(self, request, *args, **kwargs):
+        """
+        Detail view with immediate views_count update on the first GET.
+        Authenticated: dedup by user within ADS_VIEW_DEDUP_HOURS (no IP stored).
+        Anonymous: dedup by salted hashed IP within ADS_VIEW_DEDUP_HOURS (raw IP not stored).
+        """
+        # 1) fetch the object (with annotations)
         obj = self.get_object()
+
+        # 2) log the view (best-effort; never break the response)
         try:
-            cutoff = timezone.now() - timedelta(hours=VIEW_DEDUP_HOURS)
-            ip = (request.META.get('HTTP_X_FORWARDED_FOR') or '').split(',')[0].strip() or request.META.get('REMOTE_ADDR')
-            ua = request.META.get('HTTP_USER_AGENT', '')
+            hours = int(getattr(settings, 'ADS_VIEW_DEDUP_HOURS', 6))
+            cutoff = timezone.now() - timedelta(hours=hours)
+            ua = (request.META.get('HTTP_USER_AGENT') or '')[:1000]
 
             if request.user.is_authenticated:
-                exists = AdView.objects.filter(
-                    ad=obj, user=request.user, created_at__gte=cutoff
-                ).exists()
+                exists = AdView.objects.filter(ad=obj, user=request.user, created_at__gte=cutoff).exists()
                 if not exists:
-                    AdView.objects.create(
-                        ad=obj, user=request.user, ip=ip, user_agent=ua[:1000]
-                    )
+                    AdView.objects.create(ad=obj, user=request.user, ip=None, anon_ip_hash=None, user_agent=ua)
             else:
-                exists = AdView.objects.filter(
-                    ad=obj, user__isnull=True, ip=ip, created_at__gte=cutoff
-                ).exists()
-                if not exists:
-                    AdView.objects.create(
-                        ad=obj, user=None, ip=ip, user_agent=ua[:1000]
+                xff = self._first_ip_from_xff(request.META.get('HTTP_X_FORWARDED_FOR', ''))
+                ip = xff or (request.META.get('REMOTE_ADDR') or '')
+                ip_hash = self._hash_ip(ip) if ip else ''
+
+                if ip_hash:
+                    exists = (
+                        AdView.objects
+                        .filter(ad=obj, user__isnull=True, created_at__gte=cutoff)
+                        # consider legacy rows with raw IP to avoid double-count after deploy
+                        .filter(Q(anon_ip_hash=ip_hash) | Q(ip=ip))
+                        .exists()
                     )
+                    if not exists:
+                        AdView.objects.create(ad=obj, user=None, anon_ip_hash=ip_hash, ip=None, user_agent=ua)
         except Exception:
-            # logging must never block retrieve
             pass
+
+        # 3) re-fetch the object so annotated views_count includes the freshly created row
+        obj = self.get_queryset().get(pk=obj.pk)
 
         serializer = self.get_serializer(obj)
         return Response(serializer.data)
