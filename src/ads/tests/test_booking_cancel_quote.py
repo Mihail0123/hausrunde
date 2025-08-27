@@ -32,10 +32,8 @@ class CancelQuoteTests(APITestCase):
         self.assertEqual(r.data["fee_percent"], 0)
         self.assertEqual(r.data["fee_amount"], 0)
 
-    def test_60pct_if_start_today(self):
+    def test_quote_not_available_if_start_today(self):
         self.client.force_authenticate(self.tenant)
-        b = self.make_booking(start_delta_days=0, nights=5)  # price=100 * 5 nights = 500; 60% -> 300
+        b = self.make_booking(start_delta_days=0, nights=5)
         r = self.client.get(f"/api/bookings/{b.id}/cancel-quote/")
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.data["fee_percent"], 60.0)
-        self.assertEqual(r.data["fee_amount"], 300.0)
+        self.assertEqual(r.status_code, 400)

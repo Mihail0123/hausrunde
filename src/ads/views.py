@@ -789,47 +789,41 @@ class AdImageViewSet(viewsets.ModelViewSet):
 # Helper: cancellation quote calculator (module-level, no indent)
 def _compute_cancel_quote(booking):
     """
-    Policy:
-      - Free: if start is in >= 4 full days.
-      - 3 / 2 / 1 days before start: 20% / 40% / 60%.
-      - On/after start date: 100%.
+    Computes preview fee strictly for dates BEFORE the start date.
+    Caller must ensure today < booking.date_from (time rule is enforced outside).
 
-    Total cost = ad.price (per day) * nights.
+    Rules (for CONFIRMED):
+      - >= 4 full days before start: 0%
+      - 3 / 2 / 1 day(s) before start: 20% / 40% / 60%
+
+    PENDING: always 0% (before the start date).
     """
-    today = timezone.now().date()
-    days_until = (booking.date_from - today).days  # can be negative
-    FREE_CUTOFF = 4  # free if >= 4 full days before start
+    today = timezone.localdate()
+    delta = (booking.date_from - today).days  # > 0 guaranteed by caller
+    nights = max((booking.date_to - booking.date_from).days, 1)
+    total = round(float(booking.ad.price) * nights, 2)
 
-    if days_until >= FREE_CUTOFF:
-        fee_pct = 0.0
-        msg = "Free cancellation is available up to 4 full days before the start date."
-    elif days_until >= 1:
-        # 3 -> 20%, 2 -> 40%, 1 -> 60%
-        fee_pct = 0.2 * (FREE_CUTOFF - days_until)
-        msg = (
-            "Free cancellation is only up to 4 full days before start; "
-            "inside the 3-day window the fee is 20%/40%/60% per day."
-        )
+    if booking.status == Booking.PENDING:
+        pct = 0.0
     else:
-        # day-of (0) or after (<0): 100%
-        fee_pct = 1.0
-        msg = "Start date has been reached or passed; cancellation fee is 100%."
+        if delta >= 4:
+            pct = 0.0
+        elif delta == 3:
+            pct = 20.0
+        elif delta == 2:
+            pct = 40.0
+        elif delta == 1:
+            pct = 60.0
+        else:
+            # Should not happen because caller must ensure delta >= 1
+            pct = 60.0
 
-    daily_price = float(getattr(booking.ad, "price", 0) or 0)
-    nights = max(1, (booking.date_to - booking.date_from).days)
-    total_cost = daily_price * nights
-    fee_amount = round(total_cost * fee_pct, 2)
-
+    fee_amount = round(total * (pct / 100.0), 2)
     return {
-        "days_until_start": days_until,
-        "free_cancellation_cutoff_days": FREE_CUTOFF,
-        "fee_percent": round(fee_pct * 100, 2),
-        "fee_amount": fee_amount,
-        "currency": "EUR",
         "nights": nights,
-        "total_cost": round(total_cost, 2),
-        "after_start": days_until <= 0,
-        "message": msg + f" Your cancellation fee would be €{fee_amount} ({round(fee_pct*100,2)}%).",
+        "total_amount": total,
+        "fee_percent": float(pct),
+        "fee_amount": float(fee_amount),
     }
 
 @extend_schema(tags=["bookings"])
@@ -946,17 +940,17 @@ class BookingViewSet(viewsets.ModelViewSet):
     @extend_schema(
         summary="Preview cancellation fee (tenant only)",
         description=(
-                "Tenant only. Allowed statuses: **PENDING** (always 0%) and **CONFIRMED**.\n\n"
-                "Fee policy for CONFIRMED:\n"
-                "- ≥ 4 full days before start: **0%**\n"
-                "- 3 / 2 / 1 day(s) before start: **20% / 40% / 60%**\n"
-                "- On/after start date: **100%**\n\n"
-                "Returns the computed percent and amounts. Does **not** change booking status.\n\n"
-                "Cancellation (`POST /cancel/`) is allowed only **before** the start date."
+                "Tenant only. Cancellation preview is available only **before** the start date.\n\n"
+                "PENDING: 0%.\n"
+                "CONFIRMED policy:\n"
+                "- ≥ 4 full days before start: 0%\n"
+                "- 3 / 2 / 1 day(s) before start: 20% / 40% / 60%\n\n"
+                "On/after the start date preview is not available (400). "
+                "Actual cancellation (`POST /cancel/`) is also allowed only before the start date."
         ),
         responses={
             200: OpenApiResponse(description="JSON with fee percent/amount"),
-            400: OpenApiResponse(description="Invalid status (not PENDING/CONFIRMED)"),
+            400: OpenApiResponse(description="On/after start date, invalid status, or other validation error"),
             403: OpenApiResponse(description="Forbidden (not the booking tenant)"),
             404: OpenApiResponse(description="Not found"),
         },
@@ -965,23 +959,24 @@ class BookingViewSet(viewsets.ModelViewSet):
     def cancel_quote(self, request, pk=None):
         booking = self.get_object()
 
-        # Only the tenant can preview/cancel this booking
         if booking.tenant_id != request.user.id:
             raise PermissionDenied("Only the booking tenant can preview/cancel this booking.")
 
         if booking.status not in (Booking.PENDING, Booking.CONFIRMED):
             return Response(
-                {'detail': f'Cannot cancel booking with status {booking.status}.'},
+                {"detail": f"Cannot cancel booking with status {booking.status}."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Time rule: preview is available only strictly before the start date
+        today = timezone.localdate()
+        if today >= booking.date_from:
+            return Response(
+                {"detail": "Cancellation preview is not available on/after the start date."},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
         quote = _compute_cancel_quote(booking)
-        if booking.status == Booking.PENDING:
-            quote.update({
-                "fee_percent": 0.0,
-                "fee_amount": 0.0,
-                "message": "No cancellation fee for PENDING bookings.",
-            })
         return Response(quote, status=200)
 
     @extend_schema(
