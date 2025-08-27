@@ -67,7 +67,7 @@ class Review(models.Model):
     ad = models.ForeignKey('Ad', on_delete=models.CASCADE, related_name='reviews')
     tenant = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='reviews')
 
-    # One review per booking (this enforces "1 review per booking")
+    # One review per booking
     booking = models.OneToOneField('Booking', on_delete=models.CASCADE, related_name='review',null=True, blank=True)
 
     rating = models.PositiveSmallIntegerField()

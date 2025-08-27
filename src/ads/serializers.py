@@ -357,11 +357,17 @@ class BookingSerializer(serializers.ModelSerializer):
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_can_cancel(self, obj):
         user = getattr(self.context.get("request"), "user", None)
-        return self._is_tenant(obj, user) and obj.status in (Booking.PENDING, Booking.CONFIRMED)
+        today = timezone.localdate()
+        return (
+                self._is_tenant(obj, user)
+                and obj.status in (Booking.PENDING, Booking.CONFIRMED)
+                and obj.date_from > today  # only before start date
+        )
 
     @extend_schema_field(OpenApiTypes.BOOL)
     def get_can_cancel_quote(self, obj):
         user = getattr(self.context.get("request"), "user", None)
+        # Preview is allowed regardless of start date (shows 100% fee on/after start).
         return self._is_tenant(obj, user) and obj.status in (Booking.PENDING, Booking.CONFIRMED)
 
     @extend_schema_field(OpenApiTypes.BOOL)

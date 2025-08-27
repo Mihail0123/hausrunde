@@ -926,7 +926,8 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "- ≥ 4 full days before start: **0%**\n"
                 "- 3 / 2 / 1 day(s) before start: **20% / 40% / 60%**\n"
                 "- On/after start date: **100%**\n\n"
-                "Returns the computed percent and amounts. Does **not** change booking status."
+                "Returns the computed percent and amounts. Does **not** change booking status.\n\n"
+                "Cancellation (`POST /cancel/`) is allowed only **before** the start date."
         ),
         responses={
             200: OpenApiResponse(description="JSON with fee percent/amount"),
@@ -964,11 +965,14 @@ class BookingViewSet(viewsets.ModelViewSet):
                 "Tenant only. Allowed statuses to cancel: **PENDING** and **CONFIRMED**.\n"
                 "- PENDING → no fee (0%).\n"
                 "- CONFIRMED → fee per policy (0 / 20 / 40 / 60 / 100%).\n\n"
+                "**Time rule:** cancellation is allowed only **before** the start date (`date_from`). "
+                "On/after the start date the API returns 400 and does not cancel.\n\n"
                 "On success sets status to **CANCELLED** and returns the computed `cancel_quote`."
         ),
         responses={
             200: OpenApiResponse(description="Cancelled; JSON includes `cancel_quote`"),
-            400: OpenApiResponse(description="Invalid status (neither PENDING nor CONFIRMED) or already cancelled"),
+            400: OpenApiResponse(
+                description="Invalid status (neither PENDING nor CONFIRMED), already cancelled, or on/after start date"),
             403: OpenApiResponse(description="Forbidden (not the booking tenant)"),
             404: OpenApiResponse(description="Not found"),
         },
@@ -989,6 +993,14 @@ class BookingViewSet(viewsets.ModelViewSet):
         if booking.status not in (Booking.PENDING, Booking.CONFIRMED):
             return Response(
                 {'detail': f'Cannot cancel booking with status {booking.status}.'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Time rule: only before start date
+        today = timezone.localdate()
+        if today >= booking.date_from:
+            return Response(
+                {'detail': 'Cancellation is no longer allowed on/after the start date.'},
                 status=status.HTTP_400_BAD_REQUEST
             )
 
