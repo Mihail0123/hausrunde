@@ -210,10 +210,10 @@ class LoginView(APIView):
 
 
 @extend_schema(
-    summary="Logout",
+    summary="Logout (blacklist refresh & clear cookies)",
     request=None,
     responses={
-        200: OpenApiResponse(response=SimpleDetailSerializer, description="Logged out"),
+        200: OpenApiResponse(response=SimpleDetailSerializer, description="Logged out; refresh token blacklisted (if provided)"),
         401: OpenApiResponse(description="Unauthorized"),
     },
     tags=["auth"],
@@ -222,6 +222,24 @@ class LogoutView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        # try to blacklist refresh from cookie or request body (optional "refresh")
+        refresh_cookie = request.COOKIES.get("refresh_token")
+        refresh_body = None
+        try:
+            # request.data may be non-dict if no body; keep it safe
+            refresh_body = request.data.get("refresh")
+        except Exception:
+            pass
+
+        token_str = refresh_body or refresh_cookie
+        if token_str:
+            try:
+                token = RefreshToken(token_str)
+                token.blacklist()
+            except TokenError:
+                # already blacklisted / malformed / expired — ignore
+                pass
+
         response = Response({"detail": "Logout successful"}, status=status.HTTP_200_OK)
         path = getattr(settings, 'AUTH_COOKIE_PATH', '/')
         domain = getattr(settings, 'AUTH_COOKIE_DOMAIN', None)

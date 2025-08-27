@@ -56,6 +56,7 @@ INSTALLED_APPS = [
     'src.users',
     'src.ads',
     'rest_framework',
+    'rest_framework_simplejwt.token_blacklist',
     'drf_spectacular',
     'drf_spectacular_sidecar',
     'django_filters',
