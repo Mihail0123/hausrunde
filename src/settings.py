@@ -167,7 +167,7 @@ AD_IMAGE_MAX_HEIGHT = 6000         # max height in pixels
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
-# --- Ad views / privacy ---
+# --- Ad views_modules / privacy ---
 ADS_VIEW_DEDUP_HOURS = int(os.getenv("ADS_VIEW_DEDUP_HOURS", 6))  # dedup window
 ADS_ANON_IP_SALT = os.getenv("ADS_ANON_IP_SALT", SECRET_KEY)      # salt for ip hash of anon
 

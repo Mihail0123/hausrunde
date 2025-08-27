@@ -1,7 +1,7 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 
-from .views import (
+from .views_modules import (
     AdViewSet, BookingViewSet, ReviewViewSet, AdImageViewSet,
     SearchHistoryTopView,
 )
@@ -18,4 +18,5 @@ urlpatterns = [
     path("", include(router.urls)),
     path("search/top/", SearchHistoryTopView.as_view(), name="search-top"),
 ]
+
 
